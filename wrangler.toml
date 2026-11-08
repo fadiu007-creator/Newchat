@@ -22,4 +22,5 @@ required = ["OPENROUTER_API_KEY"]
 name = "newchat-agent"
 binding = "AGENT_WORKFLOW"
 class_name = "AgentWorkflow"
+default_retention = "3 days"
 
