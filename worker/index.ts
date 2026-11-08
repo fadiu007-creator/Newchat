@@ -88,15 +88,23 @@ async function startAgentExecution(request: Request, env: Env, origin: string): 
   const found = await supabaseRequest(env, auth.token, `agent_runs?id=eq.${encodeURIComponent(runId)}&select=id,status,workflow_instance_id`, "GET");
   if (!found.ok || !Array.isArray(found.data) || !found.data[0]) return json({ error: "Agent run not found." }, 404, origin);
   const run = found.data[0] as { id: string; status: string; workflow_instance_id?: string };
-  if (run.status !== "planned") return json({ error: `Run can only be started from planned status (current: ${run.status}).`, status: run.status }, 409, origin);
+  if (run.status !== "planned" && run.status !== "blocked") return json({ error: `Run can only be started from planned or resumable blocked status (current: ${run.status}).`, status: run.status }, 409, origin);
+  if (run.status === "blocked") {
+    const taskRows = await supabaseRequest(env, auth.token, `agent_tasks?run_id=eq.${encodeURIComponent(run.id)}&select=status`, "GET");
+    if (!taskRows.ok || !Array.isArray(taskRows.data) || !taskRows.data.length ||
+        taskRows.data.some((task: any) => ["failed", "blocked"].includes(task.status))) {
+      return json({ error: "This run has failed or dependency-blocked tasks. Resolve or re-plan those tasks before resuming.", status: "blocked" }, 409, origin);
+    }
+  }
   try {
-    const instance = await env.AGENT_WORKFLOW.create({ id: run.id, params: { runId: run.id, userId: auth.userId } });
-    const saved = await supabaseRequest(env, auth.token, `agent_runs?id=eq.${encodeURIComponent(run.id)}`, "PATCH", { status: "queued", workflow_instance_id: instance.id, last_error: null });
+    const workflowId = run.status === "planned" ? run.id : `${run.id}-resume-${crypto.randomUUID()}`;
+    const instance = await env.AGENT_WORKFLOW.create({ id: workflowId, params: { runId: run.id, userId: auth.userId } });
+    const saved = await supabaseRequest(env, auth.token, `agent_runs?id=eq.${encodeURIComponent(run.id)}`, "PATCH", { status: "queued", workflow_instance_id: instance.id, last_error: null, finished_at: null });
     if (!saved.ok) {
       await env.AGENT_WORKFLOW.get(instance.id).then(workflow => workflow.terminate()).catch(() => undefined);
       return json({ error: "Workflow started but its run state could not be saved. The workflow was stopped; retry after checking the database.", detail: saved.data }, 500, origin);
     }
-    await supabaseRequest(env, auth.token, "agent_events", "POST", { run_id: run.id, user_id: auth.userId, event_type: "execution_queued", message: "Durable execution queued in Cloudflare Workflows." });
+    await supabaseRequest(env, auth.token, "agent_events", "POST", { run_id: run.id, user_id: auth.userId, event_type: "execution_queued", message: run.status === "blocked" ? "Blocked run resumed in a new durable Workflow instance." : "Durable execution queued in Cloudflare Workflows." });
     return json({ run_id: run.id, workflow_id: instance.id, status: "queued" }, 202, origin);
   } catch (error) {
     return json({ error: error instanceof Error ? error.message : "Could not start durable execution." }, 502, origin);
@@ -114,20 +122,22 @@ async function controlAgentExecution(request: Request, env: Env, origin: string)
   const found = await supabaseRequest(env, auth.token, `agent_runs?id=eq.${encodeURIComponent(runId)}&select=id,status,workflow_instance_id`, "GET");
   if (!found.ok || !Array.isArray(found.data) || !found.data[0]) return json({ error: "Agent run not found." }, 404, origin);
   const run = found.data[0] as { id: string; status: string; workflow_instance_id?: string };
-  if (!run.workflow_instance_id) return json({ error: "This run has no active Workflow instance." }, 409, origin);
+  if (!run.workflow_instance_id && action !== "cancel") return json({ error: "This run has no active Workflow instance." }, 409, origin);
   try {
-    const instance = await env.AGENT_WORKFLOW.get(run.workflow_instance_id);
+    const instance = run.workflow_instance_id ? await env.AGENT_WORKFLOW.get(run.workflow_instance_id) : null;
     if (action === "pause") {
+      if (!instance) return json({ error: "No active Workflow instance to pause." }, 409, origin);
       await instance.pause();
       await supabaseRequest(env, auth.token, `agent_runs?id=eq.${encodeURIComponent(run.id)}`, "PATCH", { status: "paused", paused_at: new Date().toISOString() });
     } else if (action === "resume") {
+      if (!instance) return json({ error: "No active Workflow instance to resume." }, 409, origin);
       await instance.resume();
       await supabaseRequest(env, auth.token, `agent_runs?id=eq.${encodeURIComponent(run.id)}`, "PATCH", { status: "queued", paused_at: null });
     } else {
-      await instance.terminate();
+      if (instance) await instance.terminate();
       await supabaseRequest(env, auth.token, `agent_runs?id=eq.${encodeURIComponent(run.id)}`, "PATCH", { status: "cancelled", finished_at: new Date().toISOString(), cancel_requested_at: new Date().toISOString() });
     }
-    await supabaseRequest(env, auth.token, "agent_events", "POST", { run_id: run.id, user_id: auth.userId, event_type: `execution_${action}d`, message: `Execution ${action} requested by the owner.` });
+    await supabaseRequest(env, auth.token, "agent_events", "POST", { run_id: run.id, user_id: auth.userId, event_type: action === "pause" ? "execution_paused" : action === "resume" ? "execution_resumed" : "execution_cancelled", message: `Execution ${action} requested by the owner.` });
     return json({ run_id: run.id, status: action === "pause" ? "paused" : action === "resume" ? "queued" : "cancelled" }, 200, origin);
   } catch (error) {
     return json({ error: error instanceof Error ? error.message : "Could not control Workflow instance." }, 502, origin);
@@ -335,9 +345,6 @@ export default {
       }
     }, 200, origin);
     if (url.pathname === "/api/agent/plan" && request.method === "POST") return createAgentPlan(request, env, origin);
-    if (url.pathname === "/api/agent/start" && request.method === "POST") return startAgentExecution(request, env, origin);
-    if (url.pathname === "/api/agent/control" && request.method === "POST") return controlAgentExecution(request, env, origin);
-    if (url.pathname === "/api/agent/status" && request.method === "GET") return getAgentExecutionStatus(request, env, origin);
     if (url.pathname === "/api/agent/start" && request.method === "POST") return startAgentExecution(request, env, origin);
     if (url.pathname === "/api/agent/control" && request.method === "POST") return controlAgentExecution(request, env, origin);
     if (url.pathname === "/api/agent/status" && request.method === "GET") return getAgentExecutionStatus(request, env, origin);
