@@ -10,7 +10,7 @@ import {
 type Provider = "openrouter" | "edenai";
 type Message = { id: string; role: "user" | "assistant"; content: string };
 type Conversation = { id: string; title: string; model: string; provider: Provider; messages: Message[] };
-type AgentTask = { id?: string; task_key: string; position: number; title: string; description: string; acceptance_criteria: string[]; dependencies: string[]; status: string };
+type AgentTask = { id?: string; task_key: string; position: number; title: string; description: string; acceptance_criteria: string[]; dependencies: string[]; status: string; verification_status?: string; result?: any };\ntype AgentArtifact = { id: string; name: string; mime_type: string; content_text?: string | null; created_at: string };\ntype AgentEvent = { id: string; event_type: string; message: string; created_at: string };
 type AgentPlan = { run_id: string; status: string; summary: string; success_criteria: string[]; tasks: AgentTask[]; planner?: { provider: string; model: string; cost_policy?: string }; next?: string };
 
 const modelOptions = [
@@ -60,7 +60,7 @@ function AgentWorkspace({ session, onSignIn }: { session: Session | null; onSign
   const [budget, setBudget] = useState("0");
   const [planning, setPlanning] = useState(false);
   const [plan, setPlan] = useState<AgentPlan | null>(null);
-  const [error, setError] = useState("");
+  const [error, setError] = useState("");\n  const [busyAction, setBusyAction] = useState("");\n  const [artifacts, setArtifacts] = useState<AgentArtifact[]>([]);\n  const [events, setEvents] = useState<AgentEvent[]>([]);
 
   useEffect(() => {
     if (!supabase || !session) return;
@@ -80,6 +80,49 @@ function AgentWorkspace({ session, onSignIn }: { session: Session | null; onSign
       });
     return () => { active = false; };
   }, [session?.user.id]);
+
+
+  async function refreshRun(runId: string) {
+    if (!supabase || !session) return;
+    const [runResult, taskResult, eventResult, artifactResult] = await Promise.all([
+      supabase.from("agent_runs").select("id,status,summary,success_criteria").eq("id", runId).maybeSingle(),
+      supabase.from("agent_tasks").select("id,task_key,position,title,description,acceptance_criteria,dependencies,status,verification_status,result").eq("run_id", runId).order("position"),
+      supabase.from("agent_events").select("id,event_type,message,created_at").eq("run_id", runId).order("created_at", { ascending: false }).limit(30),
+      supabase.from("agent_artifacts").select("id,name,mime_type,content_text,created_at").eq("run_id", runId).order("created_at", { ascending: false }).limit(30)
+    ]);
+    if (runResult.data) setPlan(previous => previous && previous.run_id === runId ? {
+      ...previous, status: runResult.data.status, summary: runResult.data.summary,
+      success_criteria: runResult.data.success_criteria || [],
+      tasks: taskResult.data || previous.tasks
+    } : previous);
+    if (eventResult.data) setEvents(eventResult.data as AgentEvent[]);
+    if (artifactResult.data) setArtifacts(artifactResult.data as AgentArtifact[]);
+  }
+
+  async function runAction(action: "start" | "pause" | "resume" | "cancel") {
+    if (!session || !plan || busyAction) return;
+    setBusyAction(action); setError("");
+    try {
+      const response = await fetch(action === "start" ? "/api/agent/start" : "/api/agent/control", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: "Bearer " + session.access_token },
+        body: JSON.stringify(action === "start" ? { run_id: plan.run_id } : { run_id: plan.run_id, action })
+      });
+      const data = await response.json().catch(() => ({})) as { error?: string; status?: string };
+      if (!response.ok) throw new Error(data.error || `Agent action failed (HTTP ${response.status}).`);
+      await refreshRun(plan.run_id);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Agent action failed.");
+    } finally { setBusyAction(""); }
+  }
+
+  useEffect(() => {
+    if (!plan?.run_id || !session) return;
+    void refreshRun(plan.run_id);
+    if (!["queued", "running"].includes(plan.status)) return;
+    const timer = window.setInterval(() => { void refreshRun(plan.run_id); }, 4000);
+    return () => window.clearInterval(timer);
+  }, [plan?.run_id, plan?.status, session?.user.id]);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -140,7 +183,16 @@ function AgentWorkspace({ session, onSignIn }: { session: Session | null; onSign
           <div><strong>{task.title}</strong><p>{task.description}</p><ul>{task.acceptance_criteria.map((criterion, i) => <li key={i}>{criterion}</li>)}</ul>{task.dependencies.length > 0 && <small>Depends on: {task.dependencies.join(", ")}</small>}</div>
           <span className="agent-task-state">{task.status}</span>
         </article>)}</div>
-        <div className="agent-execution-note"><strong>Plan saved · execution engine not enabled yet.</strong><span>This first phase stores the goal, acceptance criteria and dependency graph. Durable execution, tool permissions, verification and pause/resume are the next implementation phase.</span></div>
+        <div className="agent-run-controls">
+          {plan.status === "planned" && <button className="agent-plan-button" onClick={() => void runAction("start")} disabled={!!busyAction}>{busyAction === "start" ? "Starting…" : "Start execution"}</button>}
+          {plan.status === "paused" && <button className="agent-plan-button" onClick={() => void runAction("resume")} disabled={!!busyAction}>{busyAction === "resume" ? "Resuming…" : "Resume"}</button>}
+          {["queued", "running"].includes(plan.status) && <button className="agent-secondary-button" onClick={() => void runAction("pause")} disabled={!!busyAction}>{busyAction === "pause" ? "Pausing…" : "Pause"}</button>}
+          {["queued", "running", "paused"].includes(plan.status) && <button className="agent-danger-button" onClick={() => void runAction("cancel")} disabled={!!busyAction}>{busyAction === "cancel" ? "Stopping…" : "Stop"}</button>}
+          <span className="agent-status">{plan.status}</span>
+        </div>
+        {artifacts.length > 0 && <div className="agent-output-section"><h3>Deliverables ({artifacts.length})</h3>{artifacts.map(file => <details className="agent-artifact" key={file.id}><summary>{file.name} <small>{file.mime_type}</small></summary><pre>{file.content_text || "Stored artifact."}</pre></details>)}</div>}
+        {events.length > 0 && <div className="agent-output-section"><h3>Execution activity</h3><ol className="agent-event-list">{events.map(item => <li key={item.id}><strong>{item.event_type.replaceAll("_", " ")}</strong><span>{item.message}</span><time>{new Date(item.created_at).toLocaleString()}</time></li>)}</ol></div>}
+        <div className="agent-execution-note"><strong>Execution uses free model routes only.</strong><span>Newchat records model-generated deliverables and criterion evidence. External browser automation, sandboxed code execution, GitHub writes and production deployment are not connected yet; the agent will not claim those actions were performed.</span></div>
       </div>}
     </section>
   );
