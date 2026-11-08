@@ -41,6 +41,52 @@ export class AgentWorkflow extends WorkflowEntrypoint<Env, Params> {
     await this.db("agent_events", "POST", { run_id: runId, user_id: userId, event_type: eventType, message, metadata });
   }
 
+  private async refreshOpenRouterFreeRegistry() {
+    if (!this.env.OPENROUTER_API_KEY) return { refreshed: 0, skipped: true };
+    const response = await fetch("https://openrouter.ai/api/v1/models", {
+      headers: { Authorization: `Bearer ${this.env.OPENROUTER_API_KEY}` }
+    });
+    if (!response.ok) throw new Error(`OpenRouter model catalogue failed (${response.status}).`);
+    const payload = await response.json() as { data?: Array<any> };
+    const free = (payload.data || []).filter(model =>
+      typeof model.id === "string" && model.id.endsWith(":free") &&
+      Number(model.pricing?.prompt) === 0 && Number(model.pricing?.completion) === 0
+    ).slice(0, 150);
+    if (!free.length) return { refreshed: 0, skipped: false };
+    const rows = free.map(model => {
+      const id = String(model.id);
+      const description = `${id} ${model.name || ""} ${model.description || ""}`.toLowerCase();
+      const modalities = model.architecture?.input_modalities || [];
+      const capabilities = new Set<string>(["general", "analysis"]);
+      if (/code|coder|coding|program/.test(description)) capabilities.add("coding");
+      if (/write|writer|creative|language/.test(description)) capabilities.add("writing");
+      if (modalities.includes("image")) capabilities.add("vision");
+      return {
+        provider: "openrouter", model_id: id,
+        display_name: String(model.name || id).slice(0, 160),
+        capabilities: [...capabilities],
+        context_window: Number.isInteger(model.context_length) ? model.context_length : null,
+        input_cost_per_million: 0, output_cost_per_million: 0,
+        is_free: true, enabled: true, priority: 100,
+        last_verified_at: new Date().toISOString(),
+        metadata: { source: "openrouter-model-catalogue", description: String(model.description || "").slice(0, 1200) },
+        updated_at: new Date().toISOString()
+      };
+    });
+    const saved = await fetch(`${this.env.SUPABASE_URL!.replace(/\\/$/, "")}/rest/v1/model_registry?on_conflict=provider,model_id`, {
+      method: "POST",
+      headers: {
+        apikey: this.env.SUPABASE_SERVICE_ROLE_KEY!,
+        Authorization: `Bearer ${this.env.SUPABASE_SERVICE_ROLE_KEY!}`,
+        "Content-Type": "application/json",
+        Prefer: "resolution=merge-duplicates,return=minimal"
+      },
+      body: JSON.stringify(rows)
+    });
+    if (!saved.ok) throw new Error(`Could not refresh model registry (${saved.status}): ${(await saved.text()).slice(0, 400)}`);
+    return { refreshed: rows.length, skipped: false };
+  }
+
   private async recordMetric(model: Model, taskType: string, durationMs: number, passed: boolean) {
     const filter = `provider=eq.${encodeURIComponent(model.provider)}&model_id=eq.${encodeURIComponent(model.model_id)}&task_type=eq.${encodeURIComponent(taskType)}&select=*`;
     const rows = await this.db(`model_metrics?${filter}`);
@@ -137,6 +183,18 @@ export class AgentWorkflow extends WorkflowEntrypoint<Env, Params> {
     const tasks = await step.do("load-agent-tasks", async () => {
       const rows = await this.db(`agent_tasks?run_id=eq.${encodeURIComponent(runId)}&user_id=eq.${encodeURIComponent(userId)}&select=*&order=position.asc`);
       return rows as Task[];
+    });
+    await step.do("refresh-openrouter-free-model-registry", async () => {
+      try {
+        const result = await this.refreshOpenRouterFreeRegistry();
+        await this.event(runId, userId, "model_registry_refreshed", `Model registry checked; ${result.refreshed} free OpenRouter models refreshed.`, result);
+        return result;
+      } catch (error) {
+        await this.event(runId, userId, "model_registry_refresh_failed", "Using the last saved model registry because live catalogue refresh failed.", {
+          error: error instanceof Error ? error.message : "Unknown catalogue error"
+        });
+        return { refreshed: 0, fallback: true };
+      }
     });
     const models = await step.do("load-model-registry", async () => {
       const rows = await this.db("model_registry?enabled=eq.true&is_free=eq.true&select=provider,model_id,display_name,capabilities,is_free,priority");
