@@ -47,6 +47,14 @@ export default {
         !Array.isArray(body.messages) || body.messages.length === 0 || body.messages.length > 80) {
       return json({ error: "Invalid chat request." }, 400, origin);
     }
+    const allowedModels = {
+      openrouter: ["openai/gpt-4.1", "anthropic/claude-sonnet-4", "google/gemini-2.5-pro", "deepseek/deepseek-r1", "x-ai/grok-3"],
+      openai: ["gpt-4.1", "o3"],
+      edenai: ["openai/gpt-4o", "anthropic/claude-sonnet-4-5", "deepseek/deepseek-r1", "google/gemini-2.5-pro"]
+    }[body.provider];
+    if (!allowedModels.includes(body.model)) {
+      return json({ error: "This model is not enabled for the selected provider." }, 400, origin);
+    }
     const validMessages = body.messages.every(m =>
       m && ["system", "user", "assistant"].includes(m.role) &&
       typeof m.content === "string" && m.content.length <= 30000
