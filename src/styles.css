@@ -170,3 +170,5 @@ button{color:inherit;cursor:pointer}
 .agent-execution-note strong{font-size:10px;color:#d9cafa}
 .agent-execution-note span{font-size:10px;line-height:1.55;color:#aaa6b5}
 @media(max-width:600px){.agent-workspace{padding:30px 13px 35px;gap:17px}.agent-settings-row{grid-template-columns:1fr}.agent-form-footer{align-items:stretch;flex-direction:column}.agent-form-footer>span{font-size:9px}.agent-plan-button{width:100%}.agent-plan-card{padding:14px}.agent-task{grid-template-columns:24px minmax(0,1fr)}.agent-task-state{grid-column:2;justify-self:start}.agent-plan-header{flex-direction:column}}
+
+.agent-strategy-note{margin:10px 0 0;color:#858691;font-size:9px;line-height:1.55}
