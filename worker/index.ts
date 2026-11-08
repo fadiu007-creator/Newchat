@@ -125,7 +125,7 @@ async function decideAgentApproval(request: Request, env: Env, origin: string) {
   if (!/^[0-9a-f-]{36}$/i.test(id) || !["approved", "rejected"].includes(body.decision || "")) {
     return json({ error: "A valid approval_id and decision are required." }, 400, origin);
   }
-  const found = await supabaseRequest(env, auth.token, `agent_approvals?id=eq.${encodeURIComponent(id)}&user_id=eq.${encodeURIComponent(auth.userId)}&select=id,run_id,action_type,status,expires_at`, "GET");
+  const found = await supabaseRequest(env, auth.token, `agent_approvals?id=eq.${encodeURIComponent(id)}&user_id=eq.${encodeURIComponent(auth.userId)}&select=id,run_id,task_id,action_type,status,expires_at`, "GET");
   if (!found.ok || !Array.isArray(found.data) || !found.data[0]) return json({ error: "Approval request not found." }, 404, origin);
   const approval = found.data[0] as any;
   if (approval.status !== "pending" || (approval.expires_at && Date.parse(approval.expires_at) <= Date.now())) return json({ error: "This approval is no longer pending or has expired." }, 409, origin);
@@ -133,6 +133,18 @@ async function decideAgentApproval(request: Request, env: Env, origin: string) {
     `agent_approvals?id=eq.${encodeURIComponent(id)}&user_id=eq.${encodeURIComponent(auth.userId)}&status=eq.pending`,
     "PATCH", { status: body.decision, decided_at: new Date().toISOString(), decision_note: (body.note || "").slice(0, 500) });
   if (!changed.ok || !Array.isArray(changed.data) || !changed.data.length) return json({ error: "Approval decision could not be saved." }, 409, origin);
+  if (body.decision === "rejected" && approval.run_id && approval.action_type !== "paid_model") {
+    if (approval.task_id) await supabaseServiceRequest(env, "agent_tasks?id=eq." + encodeURIComponent(approval.task_id) + "&user_id=eq." + encodeURIComponent(auth.userId), "PATCH", {
+      status: "failed", verification_status: "needs_review", error: "Owner rejected the requested GitHub operation."
+    });
+    await supabaseServiceRequest(env, "agent_runs?id=eq." + encodeURIComponent(approval.run_id) + "&user_id=eq." + encodeURIComponent(auth.userId), "PATCH", {
+      status: "failed", last_error: "Owner rejected a required GitHub operation.", finished_at: new Date().toISOString()
+    });
+    await supabaseServiceRequest(env, "agent_events", "POST", {
+      run_id: approval.run_id, user_id: auth.userId, event_type: "approval_rejected",
+      message: "Owner rejected a requested GitHub operation; the run was stopped.", metadata: { approval_id: id }
+    });
+  }
   if (body.decision === "approved" && approval.run_id && approval.action_type !== "paid_model") {
     if (!env.SUPABASE_SERVICE_ROLE_KEY) return json({ error: "Agent execution is not configured." }, 503, origin);
     try {
