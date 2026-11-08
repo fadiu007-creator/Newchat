@@ -143,12 +143,6 @@ export default function App() {
   const [authError, setAuthError] = useState("");
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const [workspaceMode, setWorkspaceMode] = useState<"agent" | "chat">("agent");
-  const [agentGoal, setAgentGoal] = useState("");
-  const [agentStrategy, setAgentStrategy] = useState<"balanced" | "best_quality" | "free_first">("balanced");
-  const [agentBudget, setAgentBudget] = useState("0");
-  const [agentPlanning, setAgentPlanning] = useState(false);
-  const [agentPlan, setAgentPlan] = useState<AgentPlan | null>(null);
-  const [agentError, setAgentError] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const active = conversations.find(c => c.id === activeId) ?? conversations[0];
@@ -339,23 +333,6 @@ export default function App() {
     } finally {
       setLoading(false);
     }
-  }
-
-  async function createAgentPlan(event: FormEvent) {
-    event.preventDefault();
-    const goal = agentGoal.trim();
-    if (goal.length < 3 || agentPlanning) return;
-    if (!session) { setAuthOpen(true); setAgentError("Sign in to create and save an agent plan."); return; }
-    const budget = Number(agentBudget);
-    if (!Number.isFinite(budget) || budget < 0 || budget > 1000) { setAgentError("Enter a valid budget between $0 and $1,000."); return; }
-    setAgentPlanning(true); setAgentError(""); setAgentPlan(null);
-    try {
-      const response = await fetch("/api/agent/plan", { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + session.access_token }, body: JSON.stringify({ goal: goal, strategy: agentStrategy, max_budget_usd: budget, max_runtime_minutes: 30, max_attempts: 3 }) });
-      const data = await response.json().catch(() => ({})) as AgentPlan & { error?: string };
-      if (!response.ok) throw new Error(data.error || "Planning failed (HTTP " + response.status + ").");
-      setAgentPlan(data);
-    } catch (error) { setAgentError(error instanceof Error ? error.message : "Could not create the plan."); }
-    finally { setAgentPlanning(false); }
   }
 
   function onSubmit(event: FormEvent) {
