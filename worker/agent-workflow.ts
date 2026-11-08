@@ -41,6 +41,25 @@ export class AgentWorkflow extends WorkflowEntrypoint<Env, Params> {
     await this.db("agent_events", "POST", { run_id: runId, user_id: userId, event_type: eventType, message, metadata });
   }
 
+  private async recordMetric(model: Model, taskType: string, durationMs: number, passed: boolean) {
+    const filter = `provider=eq.${encodeURIComponent(model.provider)}&model_id=eq.${encodeURIComponent(model.model_id)}&task_type=eq.${encodeURIComponent(taskType)}&select=*`;
+    const rows = await this.db(`model_metrics?${filter}`);
+    const old = Array.isArray(rows) ? rows[0] : null;
+    const count = Number(old?.sample_count || 0);
+    const successes = Number(old?.success_count || 0) + (passed ? 1 : 0);
+    const failures = Number(old?.failure_count || 0) + (passed ? 0 : 1);
+    const latency = Math.round(((Number(old?.avg_latency_ms || 0) * count) + durationMs) / (count + 1));
+    const score = successes / (count + 1);
+    const values = {
+      provider: model.provider, model_id: model.model_id, task_type: taskType,
+      sample_count: count + 1, success_count: successes, failure_count: failures,
+      avg_latency_ms: latency, avg_cost_usd: 0, quality_score: score,
+      last_sample_at: new Date().toISOString(), updated_at: new Date().toISOString()
+    };
+    if (old?.id) await this.db(`model_metrics?id=eq.${encodeURIComponent(old.id)}`, "PATCH", values);
+    else await this.db("model_metrics", "POST", values);
+  }
+
   private async completeTask(task: Task, run: any, userId: string, model: Model, attempt: number) {
     const started = Date.now();
     const endpoint = model.provider === "openrouter"
@@ -158,7 +177,7 @@ export class AgentWorkflow extends WorkflowEntrypoint<Env, Params> {
           });
           await this.event(runId, userId, "task_started", `Started: ${task.title}`, { task_id: task.id, attempt, provider: model.provider, model: model.model_id });
           const result = await this.completeTask(task, run, userId, model, attempt);
-          await this.db("agent_steps", "POST", {
+          await this.recordMetric(model, task.task_type || "general", result.duration, result.passed);\n          await this.db("agent_steps", "POST", {
             run_id: runId, task_id: task.id, user_id: userId, attempt, step_type: "model",
             provider: model.provider, model: model.model_id, input_summary: task.title,
             output_summary: result.result.deliverable.slice(0, 3000), status: "completed",
