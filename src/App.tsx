@@ -106,7 +106,7 @@ function AgentWorkspace({ session, onSignIn }: { session: Session | null; onSign
     <section className="agent-workspace">
       <div className="agent-hero">
         <div className="welcome-icon"><Sparkles size={23}/></div>
-        <div className="agent-eyebrow">GOAL-BASED EXECUTION</div>
+        <div className="agent-eyebrow">GOAL-BASED WORKSPACE</div>
         <h1>What do you want<br/><span>to accomplish?</span></h1>
         <p>Describe the outcome. Newchat will break it into verifiable tasks and prepare an execution plan.</p>
       </div>
@@ -120,10 +120,11 @@ function AgentWorkspace({ session, onSignIn }: { session: Session | null; onSign
           </select></label>
           <label>Maximum spend (USD)<input type="number" min="0" max="1000" step="0.50" value={budget} onChange={e => setBudget(e.target.value)}/></label>
         </div>
+        <p className="agent-strategy-note">The selected strategy is saved with this run. Per-task model routing and paid-model approval are part of the execution phase; planning currently uses OpenRouter’s free route.</p>
         <div className="agent-form-footer">
-          <span><Check size={14}/> Automatic model routing · no manual model selection</span>
+          <span><Check size={14}/> No manual model selection · free planning route</span>
           <button type="submit" className="agent-plan-button" disabled={planning || goal.trim().length < 3}>
-            {planning ? "Creating plan…" : <><Sparkles size={16}/> Create execution plan <ArrowUp size={16}/></>}
+            {planning ? "Creating plan…" : <><Sparkles size={16}/> Create plan <ArrowUp size={16}/></>}
           </button>
         </div>
       </form>
