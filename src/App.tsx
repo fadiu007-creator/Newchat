@@ -3,8 +3,8 @@ import type { Session } from "@supabase/supabase-js";
 import { supabase, supabaseConfigured } from "./lib/supabase";
 import {
   ArrowUp, AudioLines, Bot, Check, ChevronDown, CircleHelp,
-  FilePlus2, Globe2, Menu, MessageSquarePlus, MoreHorizontal,
-  PanelLeftClose, Plus, Search, Settings2, Sparkles, SquarePen, X
+  Download, FilePlus2, Globe2, Menu, MessageSquarePlus, MoreHorizontal,
+  PanelLeftClose, Pencil, Plus, Search, Settings2, Sparkles, SquarePen, Trash2, X
 } from "lucide-react";
 
 type Provider = "openrouter" | "openai";
@@ -48,10 +48,10 @@ export default function App() {
   const [authPassword, setAuthPassword] = useState("");
   const [authBusy, setAuthBusy] = useState(false);
   const [authError, setAuthError] = useState("");
-  const [historyLoaded, setHistoryLoaded] = useState(false);
+  const [historyLoaded, setHistoryLoaded] = useState(false);\n  const [searchOpen, setSearchOpen] = useState(false);\n  const [searchTerm, setSearchTerm] = useState("");
   const active = conversations.find(c => c.id === activeId) ?? conversations[0];
   const selectedModel = modelOptions.find(m => m.model === active.model) ?? modelOptions[0];
-  const grouped = useMemo(() => conversations.filter(c => c.messages.length > 0), [conversations]);
+  const grouped = useMemo(() => conversations.filter(c => c.messages.length > 0 && c.title.toLowerCase().includes(searchTerm.toLowerCase())), [conversations, searchTerm]);
   useEffect(() => {
     if (!supabase) return;
     void supabase.auth.getSession().then(({ data }) => setSession(data.session));
@@ -134,6 +134,48 @@ export default function App() {
     setConversations(prev => prev.map(c => c.id === activeId ? update(c) : c));
   }
 
+  async function deleteConversation(id: string) {
+    const target = conversations.find(c => c.id === id);
+    if (!target || !window.confirm(`Delete "${target.title}"? This cannot be undone.`)) return;
+    if (supabase && session) {
+      const { error } = await supabase.from("conversations").delete().eq("id", id);
+      if (error) { setNotice("Could not delete conversation: " + error.message); return; }
+    }
+    const remaining = conversations.filter(c => c.id !== id);
+    if (remaining.length) {
+      setConversations(remaining);
+      if (activeId === id) setActiveId(remaining[0].id);
+    } else {
+      const fresh = newConversation();
+      setConversations([fresh]);
+      setActiveId(fresh.id);
+    }
+  }
+
+  function renameConversation(id: string) {
+    const current = conversations.find(c => c.id === id);
+    if (!current) return;
+    const title = window.prompt("Rename conversation", current.title)?.trim();
+    if (!title) return;
+    setConversations(prev => prev.map(c => c.id === id ? { ...c, title: title.slice(0, 100) } : c));
+  }
+
+  function exportConversation(conversation: Conversation) {
+    const transcript = [
+      `# ${conversation.title}`,
+      `Model: ${conversation.model} (${conversation.provider})`,
+      "",
+      ...conversation.messages.flatMap(m => [`## ${m.role === "user" ? "You" : "Assistant"}`, m.content, ""])
+    ].join("\\n");
+    const blob = new Blob([transcript], { type: "text/markdown;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `${conversation.title.replace(/[^a-z0-9-_]+/gi, "-").slice(0, 60) || "newchat"}.md`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  }
+
   function createConversation() {
     const next = newConversation();
     setConversations(prev => [next, ...prev]);
@@ -206,14 +248,14 @@ export default function App() {
           <button className="icon-button sidebar-collapse" aria-label="Collapse sidebar" onClick={() => setSidebarOpen(false)}><PanelLeftClose size={17}/></button>
         </div>
         <button className="new-chat-button" onClick={createConversation}><SquarePen size={16}/> New chat <span>⌘ K</span></button>
-        <button className="nav-item"><Search size={16}/> Search chats</button>
+        <button className={`nav-item ${searchOpen ? "active" : ""}`} onClick={() => { setSearchOpen(v => !v); setSearchTerm(""); }}><Search size={16}/> Search chats</button>{searchOpen && <input className="history-search" autoFocus placeholder="Search conversations…" value={searchTerm} onChange={e => setSearchTerm(e.target.value)}/>}
         <div className="sidebar-label">WORKSPACE</div>
         <button className="nav-item active"><MessageSquarePlus size={16}/> Chats</button>
         <button className="nav-item"><Globe2 size={16}/> Explore models <span className="soon">Soon</span></button>
         <div className="history-heading"><span className="sidebar-label">RECENT</span><MoreHorizontal size={16}/></div>
         <div className="history-list">
-          {grouped.map(c => <button key={c.id} className={`history-item ${c.id === activeId ? "selected" : ""}`} onClick={() => setActiveId(c.id)}>{c.title}</button>)}
-          {grouped.length === 0 && <div className="empty-history">Your conversations will appear here.</div>}
+          {grouped.map(c => <div key={c.id} className={`history-row ${c.id === activeId ? "selected" : ""}`}><button className="history-item" onClick={() => setActiveId(c.id)}>{c.title}</button><div className="history-actions"><button title="Rename" aria-label="Rename conversation" onClick={() => renameConversation(c.id)}><Pencil size={12}/></button><button title="Export Markdown" aria-label="Export conversation" onClick={() => exportConversation(c)}><Download size={12}/></button><button title="Delete" aria-label="Delete conversation" onClick={() => void deleteConversation(c.id)}><Trash2 size={12}/></button></div></div>)}
+          {grouped.length === 0 && <div className="empty-history">{searchTerm ? "No matching conversations." : "Your conversations will appear here."}</div>}
         </div>
         <div className="sidebar-bottom">
           <button className="nav-item"><Settings2 size={16}/> Settings</button>
