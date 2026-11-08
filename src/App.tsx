@@ -48,7 +48,8 @@ export default function App() {
   const [authPassword, setAuthPassword] = useState("");
   const [authBusy, setAuthBusy] = useState(false);
   const [authError, setAuthError] = useState("");
-  const [historyLoaded, setHistoryLoaded] = useState(false);\n  const [searchOpen, setSearchOpen] = useState(false);\n  const [searchTerm, setSearchTerm] = useState("");
+  const [historyLoaded, setHistoryLoaded] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);\n  const [searchTerm, setSearchTerm] = useState("");
   const active = conversations.find(c => c.id === activeId) ?? conversations[0];
   const selectedModel = modelOptions.find(m => m.model === active.model) ?? modelOptions[0];
   const grouped = useMemo(() => conversations.filter(c => c.messages.length > 0 && c.title.toLowerCase().includes(searchTerm.toLowerCase())), [conversations, searchTerm]);
