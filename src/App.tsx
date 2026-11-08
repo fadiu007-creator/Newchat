@@ -1,4 +1,6 @@
-import { FormEvent, KeyboardEvent, useMemo, useState } from "react";
+import { FormEvent, KeyboardEvent, useEffect, useMemo, useState } from "react";
+import type { Session } from "@supabase/supabase-js";
+import { supabase, supabaseConfigured } from "./lib/supabase";
 import {
   ArrowUp, AudioLines, Bot, Check, ChevronDown, CircleHelp,
   FilePlus2, Globe2, Menu, MessageSquarePlus, MoreHorizontal,
@@ -39,9 +41,94 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [loading, setLoading] = useState(false);
   const [notice, setNotice] = useState("");
+  const [session, setSession] = useState<Session | null>(null);
+  const [authOpen, setAuthOpen] = useState(false);
+  const [authMode, setAuthMode] = useState<"signin" | "signup">("signin");
+  const [authEmail, setAuthEmail] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [authBusy, setAuthBusy] = useState(false);
+  const [authError, setAuthError] = useState("");
+  const [historyLoaded, setHistoryLoaded] = useState(false);
   const active = conversations.find(c => c.id === activeId) ?? conversations[0];
   const selectedModel = modelOptions.find(m => m.model === active.model) ?? modelOptions[0];
   const grouped = useMemo(() => conversations.filter(c => c.messages.length > 0), [conversations]);
+  useEffect(() => {
+    if (!supabase) return;
+    void supabase.auth.getSession().then(({ data }) => setSession(data.session));
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      setSession(nextSession);
+      setHistoryLoaded(false);
+    });
+    return () => subscription.unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    if (!supabase || !session) {
+      setHistoryLoaded(false);
+      return;
+    }
+    let cancelled = false;
+    void supabase.from("conversations").select("id,title,model,provider,messages")
+      .order("updated_at", { ascending: false }).then(({ data, error }) => {
+        if (cancelled) return;
+        if (error) setNotice("Could not load saved conversations: " + error.message);
+        if (data?.length) {
+          const saved = data.map(row => ({
+            id: row.id, title: row.title, model: row.model,
+            provider: row.provider as Provider, messages: row.messages as Message[]
+          }));
+          setConversations(saved);
+          setActiveId(saved[0].id);
+        } else {
+          const fresh = newConversation();
+          setConversations([fresh]);
+          setActiveId(fresh.id);
+        }
+        setHistoryLoaded(true);
+      });
+    return () => { cancelled = true; };
+  }, [session?.user.id]);
+
+  useEffect(() => {
+    if (!supabase || !session || !historyLoaded) return;
+    const rows = conversations.map(c => ({
+      id: c.id, user_id: session.user.id, title: c.title,
+      model: c.model, provider: c.provider, messages: c.messages,
+      updated_at: new Date().toISOString()
+    }));
+    if (rows.length) void supabase.from("conversations").upsert(rows, { onConflict: "id" })
+      .then(({ error }) => { if (error) setNotice("Conversation save failed: " + error.message); });
+  }, [conversations, session?.user.id, historyLoaded]);
+
+  async function submitAuth(event: FormEvent) {
+    event.preventDefault();
+    if (!supabase) return;
+    setAuthBusy(true); setAuthError("");
+    const result = authMode === "signup"
+      ? await supabase.auth.signUp({ email: authEmail, password: authPassword })
+      : await supabase.auth.signInWithPassword({ email: authEmail, password: authPassword });
+    setAuthBusy(false);
+    if (result.error) setAuthError(result.error.message);
+    else if (authMode === "signup" && !result.data.session) setAuthError("Check your email to confirm your account, then sign in.");
+    else setAuthOpen(false);
+  }
+
+  async function signInWithGoogle() {
+    if (!supabase) return;
+    setAuthBusy(true); setAuthError("");
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: "google", options: { redirectTo: window.location.origin }
+    });
+    if (error) setAuthError(error.message);
+    setAuthBusy(false);
+  }
+
+  async function signOut() {
+    if (supabase) await supabase.auth.signOut();
+    setConversations([newConversation()]);
+    setAuthOpen(false);
+  }
+
 
   function updateActive(update: (c: Conversation) => Conversation) {
     setConversations(prev => prev.map(c => c.id === activeId ? update(c) : c));
@@ -58,6 +145,7 @@ export default function App() {
   async function sendMessage(text = prompt) {
     const value = text.trim();
     if (!value || loading) return;
+    if (!session) { setAuthOpen(true); setNotice("Sign in to send messages and save your chat history."); return; }
     const userMessage: Message = { id: crypto.randomUUID(), role: "user", content: value };
     const history = [...active.messages, userMessage];
     updateActive(c => ({
@@ -71,7 +159,7 @@ export default function App() {
     try {
       const response = await fetch("/api/chat", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
         body: JSON.stringify({
           provider: active.provider,
           model: active.model,
@@ -129,7 +217,7 @@ export default function App() {
         </div>
         <div className="sidebar-bottom">
           <button className="nav-item"><Settings2 size={16}/> Settings</button>
-          <div className="profile-row"><div className="avatar">N</div><div><strong>Newchat user</strong><small>Personal workspace</small></div><MoreHorizontal size={17}/></div>
+          <div className="profile-row"><div className="avatar">{session ? (session.user.email?.[0]?.toUpperCase() || "U") : "N"}</div><div><strong>{session?.user.email || "Guest workspace"}</strong><small>{session ? "Signed in" : "Not signed in"}</small></div>{session ? <button className="profile-action" onClick={() => void signOut()}>Sign out</button> : <button className="profile-action" onClick={() => setAuthOpen(true)}>Sign in</button>}</div>
         </div>
       </aside>
 
@@ -151,7 +239,7 @@ export default function App() {
               </div>}
             </div>
           </div>
-          <div className="topbar-actions"><span className="connection-pill"><span/> Providers not configured</span><button className="icon-button" aria-label="Help"><CircleHelp size={18}/></button></div>
+          <div className="topbar-actions"><span className="connection-pill"><span className={session ? "connected" : ""}/>{session ? "Signed in" : "Sign in to sync"}</span><button className="icon-button" aria-label="Help"><CircleHelp size={18}/></button></div>
         </header>
 
         <section className={`chat-area ${active.messages.length ? "has-messages" : ""}`}>
