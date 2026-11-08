@@ -202,6 +202,7 @@ export class AgentWorkflow extends WorkflowEntrypoint<Env, Params> {
           return { passed: result.passed, result: result.result };
         });
         success = outcome.passed;
+        task.status = success ? "completed" : (attempt === maxAttempts ? "failed" : "ready");
         if (!success) lastFailure = "Acceptance criteria were not evidenced.";
       }
       if (!success) {
