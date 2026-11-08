@@ -13,6 +13,7 @@ type Conversation = { id: string; title: string; model: string; provider: Provid
 type AgentTask = { id?: string; task_key: string; position: number; title: string; description: string; acceptance_criteria: string[]; dependencies: string[]; status: string; verification_status?: string; result?: any };
 type AgentArtifact = { id: string; name: string; mime_type: string; content_text?: string | null; created_at: string };
 type AgentEvent = { id: string; event_type: string; message: string; created_at: string };
+type AgentApproval = { id: string; run_id?: string | null; action_type: string; description: string; payload?: any; created_at: string; expires_at?: string | null };
 type AgentPlan = { run_id: string; status: string; summary: string; success_criteria: string[]; tasks: AgentTask[]; planner?: { provider: string; model: string; cost_policy?: string }; next?: string };
 
 const modelOptions = [
@@ -67,11 +68,17 @@ function AgentWorkspace({ session, onSignIn }: { session: Session | null; onSign
   const [artifacts, setArtifacts] = useState<AgentArtifact[]>([]);
   const [events, setEvents] = useState<AgentEvent[]>([]);
   const [executionReady, setExecutionReady] = useState<boolean | null>(null);
+  const [githubReady, setGithubReady] = useState(false);
+  const [githubRepo, setGithubRepo] = useState("fadiu007-creator/Newchat");
+  const [githubEnabled, setGithubEnabled] = useState(false);
+  const [githubNotice, setGithubNotice] = useState("");
+  const [pendingApprovals, setPendingApprovals] = useState<AgentApproval[]>([]);
+  const [approvalBusy, setApprovalBusy] = useState("");
 
   useEffect(() => {
     let active = true;
-    void fetch("/api/health").then(response => response.json()).then((data: { capabilities?: { agentExecution?: boolean } }) => {
-      if (active) setExecutionReady(data.capabilities?.agentExecution === true);
+    void fetch("/api/health").then(response => response.json()).then((data: { capabilities?: { agentExecution?: boolean; githubOperations?: boolean } }) => {
+      if (active) { setExecutionReady(data.capabilities?.agentExecution === true); setGithubReady(data.capabilities?.githubOperations === true); }
     }).catch(() => { if (active) setExecutionReady(false); });
     return () => { active = false; };
   }, []);
@@ -95,6 +102,62 @@ function AgentWorkspace({ session, onSignIn }: { session: Session | null; onSign
     return () => { active = false; };
   }, [session?.user.id]);
 
+
+  useEffect(() => {
+    if (!supabase || !session) { setPendingApprovals([]); return; }
+    let active = true;
+    void Promise.all([
+      supabase.from("agent_tool_permissions").select("id,enabled,config").eq("user_id", session.user.id).eq("tool_name", "github").maybeSingle(),
+      supabase.from("agent_approvals").select("id,run_id,action_type,description,payload,created_at,expires_at").eq("user_id", session.user.id).eq("status", "pending").order("created_at", { ascending: false }).limit(20)
+    ]).then(([permissionResult, approvalsResult]) => {
+      if (!active) return;
+      const permission = permissionResult.data;
+      if (permission) {
+        setGithubEnabled(permission.enabled === true);
+        const repos = Array.isArray(permission.config?.repositories) ? permission.config.repositories : [];
+        if (repos.length) setGithubRepo(repos.join(", "));
+      } else {
+        setGithubEnabled(false);
+      }
+      setPendingApprovals((approvalsResult.data || []) as AgentApproval[]);
+    });
+    return () => { active = false; };
+  }, [session?.user.id]);
+
+  async function saveGithubPermission() {
+    if (!supabase || !session) { onSignIn(); return; }
+    const repositories = githubRepo.split(",").map(value => value.trim()).filter(Boolean);
+    if (!repositories.length || repositories.some(value => !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(value))) {
+      setGithubNotice("Enter one or more valid owner/repository names.");
+      return;
+    }
+    setGithubNotice("");
+    const existing = await supabase.from("agent_tool_permissions").select("id").eq("user_id", session.user.id).eq("tool_name", "github").maybeSingle();
+    const values = { enabled: githubEnabled, approval_required: true, config: { repositories } };
+    const result = existing.data
+      ? await supabase.from("agent_tool_permissions").update(values).eq("id", existing.data.id)
+      : await supabase.from("agent_tool_permissions").insert({ user_id: session.user.id, tool_name: "github", ...values });
+    if (result.error) setGithubNotice("Could not save GitHub permissions: " + result.error.message);
+    else setGithubNotice("GitHub permissions saved. All repository writes still require your approval.");
+  }
+
+  async function decideApproval(approvalId: string, decision: "approved" | "rejected") {
+    if (!session || approvalBusy) return;
+    setApprovalBusy(approvalId);
+    try {
+      const response = await fetch("/api/agent/approval/decision", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: "Bearer " + session.access_token },
+        body: JSON.stringify({ approval_id: approvalId, decision })
+      });
+      const data = await response.json().catch(() => ({})) as { error?: string };
+      if (!response.ok) throw new Error(data.error || "Could not save the approval decision.");
+      setPendingApprovals(items => items.filter(item => item.id !== approvalId));
+      if (plan?.run_id) await refreshRun(plan.run_id);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Approval decision failed.");
+    } finally { setApprovalBusy(""); }
+  }
 
   async function refreshRun(runId: string) {
     if (!supabase || !session) return;
@@ -178,7 +241,7 @@ function AgentWorkspace({ session, onSignIn }: { session: Session | null; onSign
           </select></label>
           <label>Maximum spend (USD)<input type="number" min="0" max="1000" step="0.50" value={budget} onChange={e => setBudget(e.target.value)}/></label>
         </div>
-        <p className="agent-strategy-note">The strategy is saved with this run. Execution currently ranks only the explicitly free OpenRouter models; paid-model approval and paid routing are not enabled yet.</p>
+        <p className="agent-strategy-note">The strategy is saved with this run. Agent execution uses free models; paid chat models require a separate approval and are capped at $1 in rolling 24-hour spend.</p>
         <div className="agent-form-footer">
           <span><Check size={14}/> No manual model selection · free planning route</span>
           <button type="submit" className="agent-plan-button" disabled={planning || goal.trim().length < 3}>
@@ -186,6 +249,25 @@ function AgentWorkspace({ session, onSignIn }: { session: Session | null; onSign
           </button>
         </div>
       </form>
+      <div className="agent-plan-card github-tools-panel">
+        <div className="agent-plan-header"><div><span className="agent-eyebrow">REPOSITORY ACCESS</span><h2>GitHub tools</h2></div><span className="agent-status">{githubReady ? "Connected" : "Needs setup"}</span></div>
+        <p>Choose the repositories the agent may inspect or modify. Every write, branch creation, pull request and merge requires your approval.</p>
+        <label className="github-repo-field">Allowed repositories<input value={githubRepo} onChange={event => setGithubRepo(event.target.value)} placeholder="owner/repository, owner/another-repository" /></label>
+        <label className="github-enable-row"><input type="checkbox" checked={githubEnabled} onChange={event => setGithubEnabled(event.target.checked)} /> Enable GitHub tools for this account</label>
+        <button className="agent-secondary-button" onClick={() => void saveGithubPermission()}>Save GitHub permissions</button>
+        {githubNotice && <p className="agent-strategy-note">{githubNotice}</p>}
+        {!githubReady && <p className="agent-strategy-note">Add GITHUB_APP_TOKEN as a Cloudflare Worker secret with Actions write, Checks read and repository contents/pull-request permissions.</p>}
+      </div>
+      {pendingApprovals.length > 0 && <div className="agent-plan-card">
+        <div className="agent-eyebrow">OWNER APPROVALS</div><h2>Actions waiting for approval</h2>
+        {pendingApprovals.map(item => <article className="agent-task" key={item.id}>
+          <div><strong>{item.description}</strong><p>{item.action_type.replaceAll("_", " ")} · {new Date(item.created_at).toLocaleString()}</p></div>
+          <div className="agent-run-controls">
+            <button className="agent-plan-button" disabled={!!approvalBusy} onClick={() => void decideApproval(item.id, "approved")}>{approvalBusy === item.id ? "Saving…" : "Approve"}</button>
+            <button className="agent-danger-button" disabled={!!approvalBusy} onClick={() => void decideApproval(item.id, "rejected")}>Reject</button>
+          </div>
+        </article>)}
+      </div>}
       {error && <div className="error-notice agent-notice">{error}</div>}
       {executionReady === false && <div className="error-notice agent-notice">Durable execution is not enabled on this Worker. Configure the SUPABASE_SERVICE_ROLE_KEY Worker secret and deploy the current Worker build before starting a run.</div>}
       {plan && <div className="agent-plan-card">
@@ -208,7 +290,7 @@ function AgentWorkspace({ session, onSignIn }: { session: Session | null; onSign
         </div>
         {artifacts.length > 0 && <div className="agent-output-section"><h3>Deliverables ({artifacts.length})</h3>{artifacts.map(file => <details className="agent-artifact" key={file.id}><summary>{file.name} <small>{file.mime_type}</small></summary><pre>{file.content_text || "Stored artifact."}</pre></details>)}</div>}
         {events.length > 0 && <div className="agent-output-section"><h3>Execution activity</h3><ol className="agent-event-list">{events.map(item => <li key={item.id}><strong>{item.event_type.replaceAll("_", " ")}</strong><span>{item.message}</span><time>{new Date(item.created_at).toLocaleString()}</time></li>)}</ol></div>}
-        <div className="agent-execution-note"><strong>Execution uses free model routes only.</strong><span>Newchat records model-generated deliverables and criterion evidence. External browser automation, sandboxed code execution, GitHub writes and production deployment are not connected yet; the agent will not claim those actions were performed.</span></div>
+        <div className="agent-execution-note"><strong>Execution and verification are evidence-based.</strong><span>Coding tasks run in isolated GitHub Actions containers with network disabled. GitHub repository writes require owner approval. Commit and check-run verification is independent of model-generated claims. Deployment verification is reported separately from code execution.</span></div>
       </div>}
     </section>
   );
@@ -399,17 +481,36 @@ export default function App() {
     setLoading(true);
     setNotice("");
     try {
-      const response = await fetch("/api/chat", {
+      const chatPayload = {
+        provider: active.provider,
+        model: active.model,
+        max_tokens: 1024,
+        messages: history.map(({ role, content }) => ({ role, content }))
+      };
+      let response = await fetch("/api/chat", {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
-        body: JSON.stringify({
-          provider: active.provider,
-          model: active.model,
-          max_tokens: 1024,
-          messages: history.map(({ role, content }) => ({ role, content }))
-        })
+        headers: { "Content-Type": "application/json", Authorization: "Bearer " + session.access_token },
+        body: JSON.stringify(chatPayload)
       });
-      const data = await response.json().catch(() => ({})) as { error?: string; content?: string };
+      let data = await response.json().catch(() => ({})) as { error?: string; content?: string; approval_required?: boolean; approval_id?: string; estimated_cost_usd?: number; daily_budget_usd?: number };
+      if (response.status === 402 && data.approval_required && data.approval_id) {
+        const estimate = Number(data.estimated_cost_usd || 0);
+        const accepted = window.confirm("This model is paid. Estimated cost: $" + estimate.toFixed(6) + ". Rolling 24-hour paid-model cap: $" + Number(data.daily_budget_usd || 1).toFixed(2) + ". Approve this one request?");
+        const decisionResponse = await fetch("/api/agent/approval/decision", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: "Bearer " + session.access_token },
+          body: JSON.stringify({ approval_id: data.approval_id, decision: accepted ? "approved" : "rejected" })
+        });
+        const decisionData = await decisionResponse.json().catch(() => ({})) as { error?: string };
+        if (!decisionResponse.ok) throw new Error(decisionData.error || "Could not save paid-model approval.");
+        if (!accepted) throw new Error("Paid-model request was not approved.");
+        response = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: "Bearer " + session.access_token },
+          body: JSON.stringify({ ...chatPayload, approval_id: data.approval_id })
+        });
+        data = await response.json().catch(() => ({})) as typeof data;
+      }
       if (!response.ok) throw new Error(data.error || `The model request failed (HTTP ${response.status}).`);
       const assistantMessage: Message = {
         id: createId(), role: "assistant", content: data.content || "The provider returned an empty response."
