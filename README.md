@@ -43,3 +43,11 @@ The Worker serves both the frontend and `/api/*` from `https://newchat.shqiptare
 
 ## Current status
 The repository contains the application scaffold, OpenRouter/Eden AI provider routing, Supabase email/password authentication UI, per-user conversation persistence with row-level security, and conversation search/rename/delete/Markdown export. Frontend Supabase environment variables and Cloudflare Worker secrets must be configured by the project owner before hosted authentication and chat requests can work. Google OAuth is not part of the current build.
+
+## Autonomous agent execution
+
+The Agent workspace creates a dependency-aware plan and can start it as a durable Cloudflare Workflow. Execution state, task attempts, model metrics, events and text artifacts are persisted in the existing Zikos Supabase project.
+
+Before enabling execution, add `SUPABASE_SERVICE_ROLE_KEY` as a **Worker secret** in Cloudflare (Settings → Variables and Secrets). Do not add it as a Vite variable or commit it to the repository. The execution API deliberately returns a configuration error until this secret is present. The `newchat-agent` Workflow binding is declared in `wrangler.toml`.
+
+The current runtime routes tasks through the explicitly free OpenRouter model registry and records criterion evidence and model metrics. Its verification is model-assisted content review, not an independent test runner. Browser automation, arbitrary code execution, GitHub write operations, production deployment, paid-model escalation/approval and complete tool-permission enforcement are not yet connected. The runtime must not be treated as having performed those external actions.
