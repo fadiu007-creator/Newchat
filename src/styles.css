@@ -172,3 +172,18 @@ button{color:inherit;cursor:pointer}
 @media(max-width:600px){.agent-workspace{padding:30px 13px 35px;gap:17px}.agent-settings-row{grid-template-columns:1fr}.agent-form-footer{align-items:stretch;flex-direction:column}.agent-form-footer>span{font-size:9px}.agent-plan-button{width:100%}.agent-plan-card{padding:14px}.agent-task{grid-template-columns:24px minmax(0,1fr)}.agent-task-state{grid-column:2;justify-self:start}.agent-plan-header{flex-direction:column}}
 
 .agent-strategy-note{margin:10px 0 0;color:#858691;font-size:9px;line-height:1.55}
+\n
+.agent-run-controls{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:22px 0 14px}
+.agent-secondary-button,.agent-danger-button{border:1px solid var(--border,#30343b);border-radius:10px;padding:10px 14px;background:transparent;color:inherit;font:inherit;cursor:pointer}
+.agent-danger-button{border-color:#7d3b42;color:#ff9ca4}
+.agent-run-controls button:disabled{opacity:.55;cursor:not-allowed}
+.agent-output-section{margin-top:24px}
+.agent-artifact{border:1px solid var(--border,#30343b);border-radius:10px;padding:12px;margin:9px 0}
+.agent-artifact summary{cursor:pointer;font-weight:600}
+.agent-artifact summary small{opacity:.65;margin-left:8px;font-weight:400}
+.agent-artifact pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:440px;overflow:auto;background:rgba(0,0,0,.18);padding:12px;border-radius:8px;font-size:12px}
+.agent-event-list{list-style:none;padding:0;margin:0;display:grid;gap:9px}
+.agent-event-list li{display:grid;grid-template-columns:minmax(100px,160px) 1fr auto;gap:12px;align-items:start;border-bottom:1px solid var(--border,#30343b);padding:9px 0;font-size:13px}
+.agent-event-list li strong{text-transform:capitalize}
+.agent-event-list li time{opacity:.6;font-size:11px}
+@media(max-width:650px){.agent-event-list li{grid-template-columns:1fr}.agent-event-list li time{grid-column:1}}
