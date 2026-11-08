@@ -48,7 +48,8 @@ test("sandbox validator rejects traversal, duplicate paths, oversized source and
   assert.ok(validateSandboxRequest({ language: "javascript", files: [{ path: "a.js", content: "x" }, { path: "a.js", content: "y" }], command: ["node", "a.js"] }).length > 0);
   assert.ok(validateSandboxRequest({ language: "javascript", files: [{ path: "a.js", content: "x".repeat(16001) }], command: ["node", "a.js"] }).length > 0);
   assert.ok(validateSandboxRequest({ language: "javascript", files: [{ path: "a.js", content: "x" }], command: ["node", "-e", "x; rm -rf /"] }).length > 0);
-  assert.ok(validateSandboxRequest({ language: "javascript", files: [{ path: "a.js", content: "x" }], command: ["node", "a.js"], timeout_ms: 181000 }).length > 0);\n  assert.deepEqual(validateSandboxRequest({ language: "javascript", files: [{ path: "package.json", content: "{}" }], command: ["npm", "test"] }), []);
+  assert.ok(validateSandboxRequest({ language: "javascript", files: [{ path: "a.js", content: "x" }], command: ["node", "a.js"], timeout_ms: 181000 }).length > 0);
+  assert.deepEqual(validateSandboxRequest({ language: "javascript", files: [{ path: "package.json", content: "{}" }], command: ["npm", "test"] }), []);
 });
 
 test("GitHub operations enforce repository allowlists and expose explicit bounded operations", () => {
