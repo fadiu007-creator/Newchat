@@ -1,9 +1,12 @@
 import { AgentWorkflow } from "./agent-workflow";
+import { AgentSandbox } from "./sandbox";
+export { AgentSandbox };
 export { AgentWorkflow };
 
 export interface Env {
   ASSETS: Fetcher;
   SUPABASE_SERVICE_ROLE_KEY?: string;
+  AGENT_SANDBOX: DurableObjectNamespace<AgentSandbox>;
   AGENT_WORKFLOW: {
     create(options: { id: string; params: { runId: string; userId: string } }): Promise<{ id: string }>;
     get(id: string): Promise<{
@@ -47,90 +50,9 @@ async function authenticate(request: Request, env: Env): Promise<{ token: string
   }
   try {
     const response = await fetch(`${new URL(env.SUPABASE_URL).origin}/auth/v1/user`, {
-      headers: { apikey: env.SUPABASE_ANON_KEY, Authorization: `Bearer ${token}` }
-    });
-    if (!response.ok) return json({ error: "Your session is invalid or expired. Please sign in again." }, 401);
-    const user = await response.json() as { id?: string };
-    if (!user.id) return json({ error: "Could not identify the signed-in user." }, 401);
-    return { token, userId: user.id };
-  } catch {
-    return json({ error: "Unable to verify your session. Please try again." }, 502);
-  }
-}
-
-function isResponse(value: unknown): value is Response {
-  return value instanceof Response;
-}
-
-async function supabaseRequest(env: Env, token: string, path: string, method: string, body?: unknown) {
-  const response = await fetch(`${env.SUPABASE_URL!.replace(/\/$/, "")}/rest/v1/${path}`, {
-    method,
-    headers: {
-      apikey: env.SUPABASE_ANON_KEY!,
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-      Prefer: "return=representation"
-    },
-    ...(body === undefined ? {} : { body: JSON.stringify(body) })
-  });
-  const raw = await response.text();
-  let data: unknown = null;
-  try { data = raw ? JSON.parse(raw) : null; } catch { data = raw; }
-  return { ok: response.ok, status: response.status, data };
-}
-
-
-async function startAgentExecution(request: Request, env: Env, origin: string): Promise<Response> {
-  const auth = await authenticate(request, env);
-  if (isResponse(auth)) return json(await auth.json(), auth.status, origin);
-  if (!env.SUPABASE_SERVICE_ROLE_KEY) return json({ error: "Durable agent execution is not configured: add SUPABASE_SERVICE_ROLE_KEY as a Worker secret." }, 503, origin);
-  let body: { run_id?: string };
-  try { body = await request.json() as typeof body; } catch { return json({ error: "Invalid JSON body." }, 400, origin); }
-  const runId = typeof body.run_id === "string" ? body.run_id : "";
-  if (!/^[0-9a-f-]{36}$/i.test(runId)) return json({ error: "A valid run_id is required." }, 400, origin);
-  const found = await supabaseRequest(env, auth.token, `agent_runs?id=eq.${encodeURIComponent(runId)}&select=id,status,workflow_instance_id`, "GET");
-  if (!found.ok || !Array.isArray(found.data) || !found.data[0]) return json({ error: "Agent run not found." }, 404, origin);
-  const run = found.data[0] as { id: string; status: string; workflow_instance_id?: string };
-  if (run.status !== "planned" && run.status !== "blocked") return json({ error: `Run can only be started from planned or resumable blocked status (current: ${run.status}).`, status: run.status }, 409, origin);
-  if (run.status === "blocked") {
-    const taskRows = await supabaseRequest(env, auth.token, `agent_tasks?run_id=eq.${encodeURIComponent(run.id)}&select=status`, "GET");
-    if (!taskRows.ok || !Array.isArray(taskRows.data) || !taskRows.data.length ||
-        taskRows.data.some((task: any) => ["failed", "blocked"].includes(task.status))) {
-      return json({ error: "This run has failed or dependency-blocked tasks. Resolve or re-plan those tasks before resuming.", status: "blocked" }, 409, origin);
-    }
-  }
-  try {
-    const workflowId = run.status === "planned" ? run.id : `${run.id}-resume-${crypto.randomUUID()}`;
-    const instance = await env.AGENT_WORKFLOW.create({ id: workflowId, params: { runId: run.id, userId: auth.userId } });
-    const saved = await supabaseRequest(env, auth.token, `agent_runs?id=eq.${encodeURIComponent(run.id)}`, "PATCH", { status: "queued", workflow_instance_id: instance.id, last_error: null, finished_at: null });
-    if (!saved.ok) {
-      await env.AGENT_WORKFLOW.get(instance.id).then(workflow => workflow.terminate()).catch(() => undefined);
-      return json({ error: "Workflow started but its run state could not be saved. The workflow was stopped; retry after checking the database.", detail: saved.data }, 500, origin);
-    }
-    await supabaseRequest(env, auth.token, "agent_events", "POST", { run_id: run.id, user_id: auth.userId, event_type: "execution_queued", message: run.status === "blocked" ? "Blocked run resumed in a new durable Workflow instance." : "Durable execution queued in Cloudflare Workflows." });
-    return json({ run_id: run.id, workflow_id: instance.id, status: "queued" }, 202, origin);
-  } catch (error) {
-    return json({ error: error instanceof Error ? error.message : "Could not start durable execution." }, 502, origin);
-  }
-}
-
-async function controlAgentExecution(request: Request, env: Env, origin: string): Promise<Response> {
-  const auth = await authenticate(request, env);
-  if (isResponse(auth)) return json(await auth.json(), auth.status, origin);
-  let body: { run_id?: string; action?: string };
-  try { body = await request.json() as typeof body; } catch { return json({ error: "Invalid JSON body." }, 400, origin); }
-  const runId = typeof body.run_id === "string" ? body.run_id : "";
-  const action = body.action;
-  if (!/^[0-9a-f-]{36}$/i.test(runId) || !["pause", "resume", "cancel"].includes(action || "")) return json({ error: "A valid run_id and action (pause, resume, cancel) are required." }, 400, origin);
-  const found = await supabaseRequest(env, auth.token, `agent_runs?id=eq.${encodeURIComponent(runId)}&select=id,status,workflow_instance_id`, "GET");
-  if (!found.ok || !Array.isArray(found.data) || !found.data[0]) return json({ error: "Agent run not found." }, 404, origin);
-  const run = found.data[0] as { id: string; status: string; workflow_instance_id?: string };
-  if (!run.workflow_instance_id && action !== "cancel") return json({ error: "This run has no active Workflow instance." }, 409, origin);
-  try {
-    const instance = run.workflow_instance_id ? await env.AGENT_WORKFLOW.get(run.workflow_instance_id) : null;
-    if (action === "pause") {
-      if (!instance) return json({ error: "No active Workflow instance to pause." }, 409, origin);
-      await instance.pause();
+      headers: { apikey: env.SUPABASE_ANON_K
+…[1 chars truncated — re-run with head/grep/tail for full output]…
+e();
       await supabaseRequest(env, auth.token, `agent_runs?id=eq.${encodeURIComponent(run.id)}`, "PATCH", { status: "paused", paused_at: new Date().toISOString() });
     } else if (action === "resume") {
       if (!instance) return json({ error: "No active Workflow instance to resume." }, 409, origin);
@@ -341,10 +263,9 @@ export default {
     if (!url.pathname.startsWith("/api/")) return env.ASSETS.fetch(request);
     if (url.pathname === "/api/health") return json({
       ok: true, service: "newchat-api",
-      capabilities: { chat: true, agentPlanning: true, agentExecution: Boolean(env.SUPABASE_SERVICE_ROLE_KEY && env.AGENT_WORKFLOW) },
-      capabilities: { sandboxAdapter: Boolean(env.SANDBOX_RUNNER_URL && env.SANDBOX_RUNNER_TOKEN), githubAdapter: Boolean(env.GITHUB_APP_TOKEN), independentGithubVerification: Boolean(env.GITHUB_APP_TOKEN), paidModelRouting: false },
+      capabilities: { chat: true, agentPlanning: true, agentExecution: Boolean(env.SUPABASE_SERVICE_ROLE_KEY && env.AGENT_WORKFLOW), sandboxExecution: Boolean(env.AGENT_SANDBOX), githubOperations: Boolean(env.GITHUB_APP_TOKEN), independentGithubVerification: Boolean(env.GITHUB_APP_TOKEN), paidModelRouting: false },
       configuration: {
-        sandboxRunner: Boolean(env.SANDBOX_RUNNER_URL && env.SANDBOX_RUNNER_TOKEN), githubApp: Boolean(env.GITHUB_APP_TOKEN),
+        sandboxRunner: Boolean(env.AGENT_SANDBOX), githubApp: Boolean(env.GITHUB_APP_TOKEN),
         supabase: Boolean(env.SUPABASE_URL && env.SUPABASE_ANON_KEY),
         openrouter: Boolean(env.OPENROUTER_API_KEY), edenai: Boolean(env.EDENAI_API_KEY)
       }
