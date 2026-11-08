@@ -245,6 +245,7 @@ export class AgentWorkflow extends WorkflowEntrypoint<Env, Params> {
         const pool = candidates.length ? candidates : sortedModels;
         const model = pool[(attempt - 1) % pool.length];
         const stepName = `task-${task.id}-attempt-${attempt}`.slice(0, 240);
+        const attemptStarted = Date.now();
         let outcome: { passed: boolean; result: any } | null = null;
         try {
           outcome = await step.do(stepName, { retries: { limit: 1, delay: "5 seconds", backoff: "exponential" } }, async () => {
@@ -281,7 +282,7 @@ export class AgentWorkflow extends WorkflowEntrypoint<Env, Params> {
           });
         } catch (error) {
           lastFailure = error instanceof Error ? error.message : "Model execution failed.";
-          await this.recordMetric(model, task.task_type || "general", 0, false).catch(() => undefined);
+          await this.recordMetric(model, task.task_type || "general", Date.now() - attemptStarted, false).catch(() => undefined);
           await this.db(`agent_tasks?id=eq.${encodeURIComponent(task.id)}&user_id=eq.${encodeURIComponent(userId)}`, "PATCH", {
             status: attempt === maxAttempts ? "failed" : "ready",
             verification_status: attempt === maxAttempts ? "needs_review" : "failed",
