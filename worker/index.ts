@@ -87,7 +87,20 @@ function parsePlan(raw: string): { summary: string; success_criteria: string[]; 
       };
     });
     const keys = new Set(tasks.map(t => t.key));
-    if (tasks.length < 1 || tasks.some(t => !t.title || t.acceptance_criteria.length === 0 || t.depends_on.some(d => !keys.has(d) || d === t.key))) return null;
+    if (tasks.length < 1 || keys.size !== tasks.length || tasks.some(t => !t.title || t.acceptance_criteria.length === 0 || t.depends_on.some(d => !keys.has(d) || d === t.key))) return null;
+    const byKey = new Map(tasks.map(task => [task.key, task]));
+    const visiting = new Set<string>();
+    const visited = new Set<string>();
+    const hasCycle = (key: string): boolean => {
+      if (visiting.has(key)) return true;
+      if (visited.has(key)) return false;
+      visiting.add(key);
+      for (const dependency of byKey.get(key)?.depends_on || []) if (hasCycle(dependency)) return true;
+      visiting.delete(key);
+      visited.add(key);
+      return false;
+    };
+    if (tasks.some(task => hasCycle(task.key))) return null;
     const criteria = Array.isArray(parsed.success_criteria)
       ? parsed.success_criteria.filter((v): v is string => typeof v === "string").slice(0, 12).map(v => v.slice(0, 500))
       : [];
@@ -179,14 +192,24 @@ async function createAgentPlan(request: Request, env: Env, origin: string): Prom
       await supabaseRequest(env, auth.token, `agent_runs?id=eq.${encodeURIComponent(run.id)}`, "DELETE");
       return json({ error: "The plan was generated but its tasks could not be saved.", detail: taskInsert.data }, 500, origin);
     }
-    await supabaseRequest(env, auth.token, "agent_events", "POST", {
-      run_id: run.id, user_id: auth.userId, event_type: "plan_created",
-      message: "Plan created and saved. Execution has not started.",
-      metadata: { planner: "openrouter/free", task_count: taskRows.length, planning_duration_ms: Date.now() - started }
-    });
+    const planningDuration = Date.now() - started;
+    await Promise.all([
+      supabaseRequest(env, auth.token, "agent_events", "POST", {
+        run_id: run.id, user_id: auth.userId, event_type: "plan_created",
+        message: "Plan created and saved. Execution has not started.",
+        metadata: { planner: "openrouter/free", task_count: taskRows.length, planning_duration_ms: planningDuration }
+      }),
+      supabaseRequest(env, auth.token, "agent_steps", "POST", {
+        run_id: run.id, user_id: auth.userId, attempt: 1, step_type: "plan",
+        provider: "openrouter", model: "openrouter/free",
+        input_summary: goal.slice(0, 1000), output_summary: plan.summary,
+        status: "completed", duration_ms: planningDuration, cost_usd: 0,
+        metadata: { task_count: taskRows.length, strategy }
+      })
+    ]);
     return json({
       run_id: run.id, status: "planned", summary: plan.summary,
-      success_criteria: plan.success_criteria, tasks: taskRows,
+      success_criteria: plan.success_criteria, tasks: Array.isArray(taskInsert.data) ? taskInsert.data : taskRows,
       planner: { provider: "openrouter", model: "openrouter/free", cost_policy: "free-route-requested" },
       next: "Execution engine is not enabled yet. Review the plan before starting execution."
     }, 201, origin);
