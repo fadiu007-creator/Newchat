@@ -129,6 +129,7 @@ async function decideAgentApproval(request: Request, env: Env, origin: string) {
   if (!found.ok || !Array.isArray(found.data) || !found.data[0]) return json({ error: "Approval request not found." }, 404, origin);
   const approval = found.data[0] as any;
   if (approval.status !== "pending" || (approval.expires_at && Date.parse(approval.expires_at) <= Date.now())) return json({ error: "This approval is no longer pending or has expired." }, 409, origin);
+  if (approval.run_id && approval.action_type !== "paid_model" && !env.SUPABASE_SERVICE_ROLE_KEY) return json({ error: "Agent execution is not configured." }, 503, origin);
   const changed = await supabaseRequest(env, auth.token,
     `agent_approvals?id=eq.${encodeURIComponent(id)}&user_id=eq.${encodeURIComponent(auth.userId)}&status=eq.pending`,
     "PATCH", { status: body.decision, decided_at: new Date().toISOString(), decision_note: (body.note || "").slice(0, 500) });
@@ -150,9 +151,13 @@ async function decideAgentApproval(request: Request, env: Env, origin: string) {
     try {
       const workflowId = `agent-${approval.run_id}-${crypto.randomUUID()}`;
       const instance = await env.AGENT_WORKFLOW.create({ id: workflowId, params: { runId: approval.run_id, userId: auth.userId } });
-      await supabaseServiceRequest(env, `agent_runs?id=eq.${encodeURIComponent(approval.run_id)}&user_id=eq.${encodeURIComponent(auth.userId)}`, "PATCH", {
+      const runUpdate = await supabaseServiceRequest(env, `agent_runs?id=eq.${encodeURIComponent(approval.run_id)}&user_id=eq.${encodeURIComponent(auth.userId)}`, "PATCH", {
         status: "queued", workflow_instance_id: instance.id, last_error: null, paused_at: null
       });
+      if (!runUpdate.ok) {
+        await (await env.AGENT_WORKFLOW.get(instance.id)).terminate();
+        throw new Error("Approval was saved but the agent run could not be resumed.");
+      }
       await supabaseServiceRequest(env, "agent_events", "POST", {
         run_id: approval.run_id, user_id: auth.userId, event_type: "approval_granted",
         message: "Owner approved a consequential GitHub operation. Execution resumed.",
