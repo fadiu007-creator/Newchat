@@ -119,16 +119,6 @@ export default function App() {
     else setAuthOpen(false);
   }
 
-  async function signInWithGoogle() {
-    if (!supabase) return;
-    setAuthBusy(true); setAuthError("");
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: "google", options: { redirectTo: window.location.origin }
-    });
-    if (error) setAuthError(error.message);
-    setAuthBusy(false);
-  }
-
   async function signOut() {
     if (supabase) await supabase.auth.signOut();
     setConversations([newConversation()]);
@@ -336,8 +326,6 @@ export default function App() {
           <h2 id="auth-title">{authMode === "signin" ? "Welcome back" : "Create your account"}</h2>
           <p>Sign in to save and sync your conversations.</p>
           {!supabaseConfigured ? <div className="error-notice">Supabase is not configured. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to your environment.</div> : <>
-            <button className="google-button" onClick={() => void signInWithGoogle()} disabled={authBusy}>Continue with Google</button>
-            <div className="auth-divider">or continue with email</div>
             <form onSubmit={submitAuth} className="auth-form">
               <input type="email" value={authEmail} onChange={e => setAuthEmail(e.target.value)} placeholder="Email address" required/>
               <input type="password" value={authPassword} onChange={e => setAuthPassword(e.target.value)} placeholder="Password (minimum 6 characters)" minLength={6} required/>
