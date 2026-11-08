@@ -1,14 +1,14 @@
 export interface Env {
   ASSETS: Fetcher;
   OPENROUTER_API_KEY?: string;
-  OPENAI_API_KEY?: string;
+  OPENAI_API_KEY?: string;\n  EDENAI_API_KEY?: string;
   SUPABASE_URL?: string;
   SUPABASE_ANON_KEY?: string;
   ALLOWED_ORIGIN?: string;
 }
 
 type ChatMessage = { role: "system" | "user" | "assistant"; content: string };
-type ChatRequest = { provider: "openrouter" | "openai"; model: string; messages: ChatMessage[] };
+type ChatRequest = { provider: "openrouter" | "openai" | "edenai"; model: string; messages: ChatMessage[] };
 
 const json = (data: unknown, status = 200, origin = "*") =>
   new Response(JSON.stringify(data), {
@@ -41,7 +41,7 @@ export default {
     try { body = await request.json() as ChatRequest; }
     catch { return json({ error: "Invalid JSON body." }, 400, origin); }
 
-    if (!body || !["openrouter", "openai"].includes(body.provider) ||
+    if (!body || !["openrouter", "openai", "edenai"].includes(body.provider) ||
         typeof body.model !== "string" || body.model.length > 160 ||
         !Array.isArray(body.messages) || body.messages.length === 0 || body.messages.length > 80) {
       return json({ error: "Invalid chat request." }, 400, origin);
@@ -79,7 +79,7 @@ export default {
       "Authorization": `Bearer ${apiKey}`,
       "Content-Type": "application/json"
     };
-    if (!isOpenAI) {
+    if (body.provider === "openrouter") {
       headers["HTTP-Referer"] = "https://newchat.app";
       headers["X-Title"] = "Newchat";
     }
