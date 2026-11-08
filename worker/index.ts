@@ -58,7 +58,7 @@ export default {
       return json({ error: "Authentication is required. Configure Supabase and sign in." }, 401, origin);
     }
     try {
-      const authResponse = await fetch(`${env.SUPABASE_URL.replace(/\\/$/, "")}/auth/v1/user`, {
+      const authResponse = await fetch(`${new URL(env.SUPABASE_URL).origin/auth/v1/user`, {
         headers: { "apikey": env.SUPABASE_ANON_KEY, "Authorization": `Bearer ${accessToken}` }
       });
       if (!authResponse.ok) return json({ error: "Your session is invalid or expired. Please sign in again." }, 401, origin);
