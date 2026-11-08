@@ -1,0 +1,11 @@
+name = "newchat"
+main = "worker/index.ts"
+compatibility_date = "2026-11-08"
+
+[assets]
+directory = "./dist"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+
+[vars]
+ALLOWED_ORIGIN = "https://newchat.pages.dev"
