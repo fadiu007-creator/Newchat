@@ -79,11 +79,12 @@ export default function App() {
     void supabase.from("conversations").select("id,title,model,provider,messages")
       .order("updated_at", { ascending: false }).then(({ data, error }) => {
         if (cancelled) return;
-        if (error) setNotice("Could not load saved conversations: " + error.message);
-        if (data?.length) {
+        if (error) {
+          setNotice("Could not load saved conversations: " + error.message);
+        } else if (data?.length) {
           const saved = data.map(row => ({
             id: row.id, title: row.title, model: row.model,
-            provider: row.provider as Provider, messages: row.messages as Message[]
+            provider: row.provider as Provider, messages: Array.isArray(row.messages) ? row.messages as Message[] : []
           }));
           setConversations(saved);
           setActiveId(saved[0].id);
@@ -92,6 +93,10 @@ export default function App() {
           setConversations([fresh]);
           setActiveId(fresh.id);
         }
+        setHistoryLoaded(true);
+      }).catch(error => {
+        if (cancelled) return;
+        setNotice(error instanceof Error ? "Could not load saved conversations: " + error.message : "Could not load saved conversations.");
         setHistoryLoaded(true);
       });
     return () => { cancelled = true; };
@@ -222,8 +227,8 @@ export default function App() {
           messages: history.map(({ role, content }) => ({ role, content }))
         })
       });
-      const data = await response.json() as { error?: string; content?: string };
-      if (!response.ok) throw new Error(data.error || "The model request failed.");
+      const data = await response.json().catch(() => ({})) as { error?: string; content?: string };
+      if (!response.ok) throw new Error(data.error || `The model request failed (HTTP ${response.status}).`);
       const assistantMessage: Message = {
         id: createId(), role: "assistant", content: data.content || "The provider returned an empty response."
       };
