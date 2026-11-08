@@ -161,7 +161,7 @@ function AgentWorkspace({ session, onSignIn }: { session: Session | null; onSign
 
   async function refreshRun(runId: string) {
     if (!supabase || !session) return;
-    const [runResult, taskResult, eventResult, artifactResult] = await Promise.all([
+    const [runResult, taskResult, eventResult, artifactResult, approvalResult] = await Promise.all([
       supabase.from("agent_runs").select("id,status,summary,success_criteria").eq("id", runId).maybeSingle(),
       supabase.from("agent_tasks").select("id,task_key,position,title,description,acceptance_criteria,dependencies,status,verification_status,result").eq("run_id", runId).order("position"),
       supabase.from("agent_events").select("id,event_type,message,created_at").eq("run_id", runId).order("created_at", { ascending: false }).limit(30),
