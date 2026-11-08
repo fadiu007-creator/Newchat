@@ -1,32 +1,39 @@
 # Newchat
 
-A unified AI chat workspace for OpenRouter and OpenAI, with a provider adapter architecture for future gateways such as Eden AI and LiteLLM.
+A unified AI chat workspace for OpenRouter and OpenAI, designed to support additional gateways such as Eden AI and LiteLLM.
 
 ## Stack
 - React + TypeScript + Vite
 - Cloudflare Workers API
-- Supabase Auth and Postgres (planned integration)
-- OpenRouter for multi-model access
-- Direct OpenAI integration for OpenAI-specific capabilities
+- Supabase Auth + Postgres with row-level security
+- OpenRouter multi-model gateway
+- Direct OpenAI API integration
 
 ## Local development
 ```bash
 npm install
 cp .env.example .env
 npm run dev
-# In a second terminal, run the API worker:
+# In a second terminal:
 npm run dev:worker
 ```
 
-The Vite UI runs on port 5173 and proxies /api requests to the Wrangler Worker on port 8787. Provider requests are made through the Worker API; never put provider API keys in browser variables.
+Vite runs on port 5173 and proxies `/api` requests to Wrangler on port 8787. Provider keys must only be stored as Cloudflare Worker secrets, never in browser variables.
 
-Deploy with `npm run deploy` after setting Worker secrets.
+## Supabase setup
+1. Create a Supabase project.
+2. Add the project URL to `VITE_SUPABASE_URL` and its publishable/anon key to `VITE_SUPABASE_ANON_KEY`.
+3. Run `supabase/migrations/001_conversations.sql` in the Supabase SQL editor.
+4. In Supabase Authentication, enable Email and Google providers. For Google, configure the OAuth client and Supabase callback URL in Google Cloud; add your app URL to Supabase's allowed redirect URLs.
+5. Set Worker secrets `SUPABASE_URL` and `SUPABASE_ANON_KEY` to the same project values so the API can verify signed-in sessions.
 
-## Worker secrets
-Set these with Wrangler or the Cloudflare dashboard:
-- `OPENROUTER_API_KEY` (optional until configured)
-- `OPENAI_API_KEY` (optional until configured)
-- `ALLOWED_ORIGIN` (your deployed frontend origin)
+## Cloudflare Worker secrets
+- `OPENROUTER_API_KEY`
+- `OPENAI_API_KEY`
+- `SUPABASE_URL`
+- `SUPABASE_ANON_KEY`
+
+Set `ALLOWED_ORIGIN` in `wrangler.toml` to the exact production frontend origin.
 
 ## Current status
-Initial application scaffold. Authentication, durable conversation persistence, billing, and production provider configuration are not yet enabled. Do not treat the demo/local conversation state as secure multi-user storage.
+The repository contains the application scaffold, provider adapter endpoint, Supabase email/Google authentication UI, and per-user conversation persistence with row-level security. Supabase credentials, Google OAuth configuration, Cloudflare secrets, and production deployment must be configured by the project owner before hosted authentication and chat requests can work.
