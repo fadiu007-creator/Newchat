@@ -386,7 +386,8 @@ export default function App() {
         <button className="new-chat-button" onClick={createConversation}><SquarePen size={16}/> New chat <span>⌘ K</span></button>
         <button className={`nav-item ${searchOpen ? "active" : ""}`} onClick={() => { setSearchOpen(v => !v); setSearchTerm(""); }}><Search size={16}/> Search chats</button>{searchOpen && <input className="history-search" autoFocus placeholder="Search conversations…" value={searchTerm} onChange={e => setSearchTerm(e.target.value)}/>}
         <div className="sidebar-label">WORKSPACE</div>
-        <button className="nav-item active"><MessageSquarePlus size={16}/> Chats</button>
+        <button className={"nav-item " + (workspaceMode === "agent" ? "active" : "")} onClick={() => setWorkspaceMode("agent")}><Sparkles size={16}/> Agent workspace</button>
+        <button className={"nav-item " + (workspaceMode === "chat" ? "active" : "")} onClick={() => setWorkspaceMode("chat")}><MessageSquarePlus size={16}/> Chats</button>
         <button className="nav-item"><Globe2 size={16}/> Explore models <span className="soon">Soon</span></button>
         <div className="history-heading"><span className="sidebar-label">RECENT</span><MoreHorizontal size={16}/></div>
         <div className="history-list">
@@ -403,7 +404,7 @@ export default function App() {
         <header className="topbar">
           <div className="topbar-left">
             {!sidebarOpen && <button className="icon-button" onClick={() => setSidebarOpen(true)} aria-label="Open sidebar"><Menu size={18}/></button>}
-            <div className="model-picker-wrap">
+            {workspaceMode === "chat" && <div className="model-picker-wrap">
               <button className="model-picker" onClick={() => setMenuOpen(v => !v)}>
                 <span className="model-orb"><Bot size={16}/></span>
                 <strong>{selectedModel.label}</strong><ChevronDown size={15}/>
@@ -420,11 +421,13 @@ export default function App() {
                   {m.model === active.model && m.provider === active.provider && <Check size={15}/>}
                 </button>)}
               </div>}
-            </div>
+            </div>}
+            {workspaceMode === "agent" && <div className="agent-topbar-title"><Sparkles size={16}/> Autonomous agent</div>}
           </div>
           <div className="topbar-actions"><span className="connection-pill"><span className={session ? "connected" : ""}/>{session ? "Signed in" : "Sign in to sync"}</span><button className="icon-button" aria-label="Help"><CircleHelp size={18}/></button></div>
         </header>
 
+        {workspaceMode === "agent" ? <AgentWorkspace session={session} onSignIn={() => setAuthOpen(true)}/> : (
         <section className={`chat-area ${active.messages.length ? "has-messages" : ""}`}>
           {active.messages.length === 0 ? (
             <div className="welcome">
@@ -446,8 +449,9 @@ export default function App() {
             </div>
           )}
         </section>
+        )}
 
-        <div className="composer-wrap">
+        {workspaceMode === "chat" && <div className="composer-wrap">
           {notice && <div className="error-notice"><span>{notice}</span><button onClick={() => setNotice("")} aria-label="Dismiss"><X size={14}/></button></div>}
           <form className="composer" onSubmit={onSubmit}>
             <textarea value={prompt} onChange={e => setPrompt(e.target.value)} onKeyDown={onKeyDown} placeholder="Message Newchat..." rows={2} />
@@ -457,7 +461,7 @@ export default function App() {
             </div>
           </form>
           <div className="disclaimer">Newchat can make mistakes. Verify important information.</div>
-        </div>
+        </div>}
       </main>
       {authOpen && <div className="auth-backdrop" role="presentation" onMouseDown={e => { if (e.target === e.currentTarget) setAuthOpen(false); }}>
         <section className="auth-card" role="dialog" aria-modal="true" aria-labelledby="auth-title">
