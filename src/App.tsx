@@ -66,6 +66,15 @@ function AgentWorkspace({ session, onSignIn }: { session: Session | null; onSign
   const [busyAction, setBusyAction] = useState("");
   const [artifacts, setArtifacts] = useState<AgentArtifact[]>([]);
   const [events, setEvents] = useState<AgentEvent[]>([]);
+  const [executionReady, setExecutionReady] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    void fetch("/api/health").then(response => response.json()).then((data: { capabilities?: { agentExecution?: boolean } }) => {
+      if (active) setExecutionReady(data.capabilities?.agentExecution === true);
+    }).catch(() => { if (active) setExecutionReady(false); });
+    return () => { active = false; };
+  }, []);
 
   useEffect(() => {
     if (!supabase || !session) return;
@@ -178,6 +187,7 @@ function AgentWorkspace({ session, onSignIn }: { session: Session | null; onSign
         </div>
       </form>
       {error && <div className="error-notice agent-notice">{error}</div>}
+      {executionReady === false && <div className="error-notice agent-notice">Durable execution is not enabled on this Worker. Configure the SUPABASE_SERVICE_ROLE_KEY Worker secret and deploy the current Worker build before starting a run.</div>}
       {plan && <div className="agent-plan-card">
         <div className="agent-plan-header"><div><span className="agent-eyebrow">PLAN CREATED</span><h2>{plan.summary}</h2></div><span className="agent-status">{plan.status}</span></div>
         <div className="agent-run-meta">Run ID: {plan.run_id} · Planner: {plan.planner?.model || "Saved plan"} · {plan.tasks.length} tasks</div>
@@ -190,7 +200,7 @@ function AgentWorkspace({ session, onSignIn }: { session: Session | null; onSign
           <span className="agent-task-state">{task.status}</span>
         </article>)}</div>
         <div className="agent-run-controls">
-          {plan.status === "planned" && <button className="agent-plan-button" onClick={() => void runAction("start")} disabled={!!busyAction}>{busyAction === "start" ? "Starting…" : "Start execution"}</button>}
+          {plan.status === "planned" && <button className="agent-plan-button" onClick={() => void runAction("start")} disabled={!!busyAction || executionReady === false}>{busyAction === "start" ? "Starting…" : executionReady === false ? "Execution not configured" : "Start execution"}</button>}
           {plan.status === "paused" && <button className="agent-plan-button" onClick={() => void runAction("resume")} disabled={!!busyAction}>{busyAction === "resume" ? "Resuming…" : "Resume"}</button>}
           {["queued", "running"].includes(plan.status) && <button className="agent-secondary-button" onClick={() => void runAction("pause")} disabled={!!busyAction}>{busyAction === "pause" ? "Pausing…" : "Pause"}</button>}
           {["queued", "running", "paused"].includes(plan.status) && <button className="agent-danger-button" onClick={() => void runAction("cancel")} disabled={!!busyAction}>{busyAction === "cancel" ? "Stopping…" : "Stop"}</button>}
