@@ -38,12 +38,19 @@ Vite runs on port 5173 and proxies `/api` requests to Wrangler on port 8787. Pro
 - `EDENAI_API_KEY`
 - `SUPABASE_URL`
 - `SUPABASE_ANON_KEY`
+- `SUPABASE_SERVICE_ROLE_KEY` — required only for the server-side Cloudflare Workflow executor. Never expose this key as a Vite/build variable or in browser code.
+
+The `newchat-agent` Cloudflare Workflow binding and `AgentWorkflow` class are declared in `wrangler.toml` and `worker/agent-workflow.ts`. The Agent workspace checks `/api/health` and disables Start when the deployed Worker does not have both the Workflow binding and service-role secret.
 - `SUPABASE_SERVICE_ROLE_KEY` (server-only; required for durable agent execution)
 
 The Worker serves both the frontend and `/api/*` from `https://newchat.shqiptare.workers.dev`; keep `ALLOWED_ORIGIN` set to that exact origin. No Pages deployment is required.
 
 ## Current status
-The repository contains the application scaffold, OpenRouter/Eden AI provider routing, Supabase email/password authentication UI, per-user conversation persistence with row-level security, and conversation search/rename/delete/Markdown export. Frontend Supabase environment variables and Cloudflare Worker secrets must be configured by the project owner before hosted authentication and chat requests can work. Google OAuth is not part of the current build.
+The repository contains the application scaffold, OpenRouter/Eden AI provider routing, Supabase email/password authentication UI, per-user conversation persistence with row-level security, and conversation search/rename/delete/Markdown export.
+
+The Agent workspace includes durable Cloudflare Workflow orchestration, bounded task attempts, free-model registry refresh from OpenRouter, per-task model routing based on measured task metrics, task outputs, artifact records, event history, and pause/resume/cancel controls. Execution currently generates deliverables through AI models; it does **not** yet have connected browser automation, general web search inside the deployed Worker, sandboxed code execution, file-system tools, GitHub repository actions, or production deployment tools. It must not claim those actions were performed. Only explicitly free OpenRouter models are eligible; paid-model escalation and real paid-cost accounting are not enabled. The configured budget is stored with the run but is not a paid-spend authorization mechanism.
+
+Frontend Supabase build variables and Worker secrets must be configured by the project owner before hosted authentication and execution work. Google OAuth is not part of the current build.
 
 ## Autonomous agent execution
 
