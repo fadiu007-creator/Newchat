@@ -73,7 +73,7 @@ export class AgentWorkflow extends WorkflowEntrypoint<Env, Params> {
         updated_at: new Date().toISOString()
       };
     });
-    const saved = await fetch(`${this.env.SUPABASE_URL!.replace(/\\/$/, "")}/rest/v1/model_registry?on_conflict=provider,model_id`, {
+    const saved = await fetch(`${this.env.SUPABASE_URL!.replace(/\/$/, "")}/rest/v1/model_registry?on_conflict=provider,model_id`, {
       method: "POST",
       headers: {
         apikey: this.env.SUPABASE_SERVICE_ROLE_KEY!,
