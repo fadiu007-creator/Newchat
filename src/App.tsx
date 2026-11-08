@@ -198,7 +198,8 @@ export default function App() {
     const value = text.trim();
     if (!value || loading) return;
     if (!session) { setAuthOpen(true); setNotice("Sign in to send messages and save your chat history."); return; }
-    const conversationId = active.id;\n    const userMessage: Message = { id: crypto.randomUUID(), role: "user", content: value };
+    const conversationId = active.id;
+    const userMessage: Message = { id: crypto.randomUUID(), role: "user", content: value };
     const history = [...active.messages, userMessage];
     updateConversation(conversationId, c => ({
       ...c,
