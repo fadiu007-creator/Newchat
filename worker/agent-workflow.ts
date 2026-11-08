@@ -1,3 +1,4 @@
+import type { AgentSandbox } from "./sandbox";
 import { WorkflowEntrypoint, WorkflowStep } from "cloudflare:workers";
 import type { WorkflowEvent } from "cloudflare:workers";
 
@@ -6,6 +7,7 @@ type Env = {
   SUPABASE_SERVICE_ROLE_KEY?: string;
   OPENROUTER_API_KEY?: string;
   EDENAI_API_KEY?: string;
+  AGENT_SANDBOX: DurableObjectNamespace<AgentSandbox>;
 };
 type Params = { runId: string; userId: string };
 type Task = {
@@ -38,58 +40,9 @@ export class AgentWorkflow extends WorkflowEntrypoint<Env, Params> {
   }
 
   private async event(runId: string, userId: string, eventType: string, message: string, metadata: unknown = {}) {
-    await this.db("agent_events", "POST", { run_id: runId, user_id: userId, event_type: eventType, message, metadata });
-  }
-
-  private async refreshOpenRouterFreeRegistry() {
-    if (!this.env.OPENROUTER_API_KEY) return { refreshed: 0, skipped: true };
-    const response = await fetch("https://openrouter.ai/api/v1/models", {
-      headers: { Authorization: `Bearer ${this.env.OPENROUTER_API_KEY}` }
-    });
-    if (!response.ok) throw new Error(`OpenRouter model catalogue failed (${response.status}).`);
-    const payload = await response.json() as { data?: Array<any> };
-    const free = (payload.data || []).filter(model =>
-      typeof model.id === "string" && model.id.endsWith(":free") &&
-      Number(model.pricing?.prompt) === 0 && Number(model.pricing?.completion) === 0
-    ).slice(0, 150);
-    if (!free.length) return { refreshed: 0, skipped: false };
-    const rows = free.map(model => {
-      const id = String(model.id);
-      const description = `${id} ${model.name || ""} ${model.description || ""}`.toLowerCase();
-      const modalities = model.architecture?.input_modalities || [];
-      const capabilities = new Set<string>(["general", "analysis"]);
-      if (/code|coder|coding|program/.test(description)) capabilities.add("coding");
-      if (/write|writer|creative|language/.test(description)) capabilities.add("writing");
-      if (modalities.includes("image")) capabilities.add("vision");
-      return {
-        provider: "openrouter", model_id: id,
-        display_name: String(model.name || id).slice(0, 160),
-        capabilities: [...capabilities],
-        context_window: Number.isInteger(model.context_length) ? model.context_length : null,
-        input_cost_per_million: 0, output_cost_per_million: 0,
-        is_free: true, enabled: true, priority: 100,
-        last_verified_at: new Date().toISOString(),
-        metadata: { source: "openrouter-model-catalogue", description: String(model.description || "").slice(0, 1200) },
-        updated_at: new Date().toISOString()
-      };
-    });
-    const saved = await fetch(`${this.env.SUPABASE_URL!.replace(/\/$/, "")}/rest/v1/model_registry?on_conflict=provider,model_id`, {
-      method: "POST",
-      headers: {
-        apikey: this.env.SUPABASE_SERVICE_ROLE_KEY!,
-        Authorization: `Bearer ${this.env.SUPABASE_SERVICE_ROLE_KEY!}`,
-        "Content-Type": "application/json",
-        Prefer: "resolution=merge-duplicates,return=minimal"
-      },
-      body: JSON.stringify(rows)
-    });
-    if (!saved.ok) throw new Error(`Could not refresh model registry (${saved.status}): ${(await saved.text()).slice(0, 400)}`);
-    return { refreshed: rows.length, skipped: false };
-  }
-
-  private async recordMetric(model: Model, taskType: string, durationMs: number, passed: boolean) {
-    const filter = `provider=eq.${encodeURIComponent(model.provider)}&model_id=eq.${encodeURIComponent(model.model_id)}&task_type=eq.${encodeURIComponent(taskType)}&select=*`;
-    const rows = await this.db(`model_metrics?${filter}`);
+    await this.db("agent_events", "POST", { run_id: runId, user_id: userId, event_type: eve
+…[1 chars truncated — re-run with head/grep/tail for full output]…
+b(`model_metrics?${filter}`);
     const old = Array.isArray(rows) ? rows[0] : null;
     const count = Number(old?.sample_count || 0);
     const successes = Number(old?.success_count || 0) + (passed ? 1 : 0);
@@ -116,8 +69,8 @@ export class AgentWorkflow extends WorkflowEntrypoint<Env, Params> {
     const prompt = [
       "You are executing one bounded task inside Newchat. Produce a concrete deliverable, not a plan.",
       "Be explicit about assumptions and limitations. Never claim an external action, deployment, test, or file write happened unless a connected tool actually performed it.",
-      "Return JSON only: {\"deliverable\":\"...\",\"artifacts\":[{\"name\":\"...\",\"mime_type\":\"text/plain\",\"content\":\"...\"}],\"criterion_evidence\":[{\"criterion\":\"...\",\"evidence\":\"...\",\"status\":\"met|not_met|not_verifiable\"}],\"limitations\":[\"...\"]}.",
-      "If code is requested, put complete source files in artifacts. Do not say code was run or deployed.",
+      "Return JSON only: {\"deliverable\":\"...\",\"artifacts\":[{\"name\":\"...\",\"mime_type\":\"text/plain\",\"content\":\"...\"}],\"criterion_evidence\":[{\"criterion\":\"...\",\"evidence\":\"...\",\"status\":\"met|not_met|not_verifiable\"}],\"limitations\":[\"...\"],\"execution\":{\"files\":[{\"path\":\"relative/path\",\"content\":\"...\"}],\"argv\":[\"node\",\"--test\"],\"timeout_ms\":60000}}. For coding tasks execution is mandatory.",
+      "For coding tasks, include complete runnable source files in execution.files, and a safe direct argv command that runs tests or validation. No shell chaining. The sandbox has no network and no application secrets. Do not claim a run succeeded unless the execution receipt confirms exit code zero.",
       `Goal: ${run.goal}`,
       `Task: ${task.title}`,
       `Description: ${task.description}`,
@@ -149,17 +102,25 @@ export class AgentWorkflow extends WorkflowEntrypoint<Env, Params> {
     if (typeof result.deliverable !== "string" || !Array.isArray(result.criterion_evidence)) throw new Error("Task response did not include the required evidence structure.");
     const limitations = Array.isArray(result.limitations) ? result.limitations.filter((x: unknown) => typeof x === "string").slice(0, 20) : [];
     const artifacts = Array.isArray(result.artifacts) ? result.artifacts.filter((x: any) => x && typeof x.name === "string" && typeof x.content === "string").slice(0, 20) : [];
+    let execution: any = null;
+    if (task.task_type === "coding") {
+      if (!result.execution || !Array.isArray(result.execution.files) || !Array.isArray(result.execution.argv)) throw new Error("Coding task did not provide executable files and a bounded command.");
+      const sandbox = this.env.AGENT_SANDBOX.getByName(`agent-${run.id}-${task.id}`);
+      execution = await sandbox.execute({ files: result.execution.files, argv: result.execution.argv, timeout_ms: result.execution.timeout_ms });
+    }
     const evidenceByCriterion = new Map(result.criterion_evidence.map((item: any) => [item.criterion, item]));
     const evidenceCorpus = [result.deliverable, ...artifacts.map((artifact: any) => artifact.content)].join("\n");
     const allCriteriaAccountedFor = task.acceptance_criteria.every(c => evidenceByCriterion.has(c));
     // A model's assertion is not evidence: the quoted evidence must occur verbatim in a saved deliverable.
-    const allMet = allCriteriaAccountedFor && task.acceptance_criteria.every(c => {
+    const modelEvidenceMet = allCriteriaAccountedFor && task.acceptance_criteria.every(c => {
       const item = evidenceByCriterion.get(c) as any;
       return item?.status === "met" && typeof item?.evidence === "string" &&
         item.evidence.trim().length >= 12 && evidenceCorpus.includes(item.evidence.trim());
     });
+    const allMet = modelEvidenceMet && (task.task_type !== "coding" || execution?.passed === true);
+    if (task.task_type === "coding" && execution && !execution.passed) limitations.push(`Sandbox command failed (exit ${execution.exit_code}): ${execution.stderr.slice(0, 1200)}`);
     return {
-      result: { deliverable: result.deliverable, criterion_evidence: result.criterion_evidence, limitations, model_review_passed: allMet, external_execution: "not_available_in_this_runtime" },
+      result: { deliverable: result.deliverable, criterion_evidence: result.criterion_evidence, limitations, model_review_passed: modelEvidenceMet, execution, external_execution: task.task_type === "coding" ? "cloudflare-container" : "not_required" },
       artifacts, duration: Date.now() - started, passed: allMet
     };
   }
@@ -260,7 +221,7 @@ export class AgentWorkflow extends WorkflowEntrypoint<Env, Params> {
             run_id: runId, task_id: task.id, user_id: userId, attempt, step_type: attempt > 1 ? "repair" : "model",
             provider: model.provider, model: model.model_id, input_summary: task.title,
             output_summary: result.result.deliverable.slice(0, 3000), status: "completed",
-            duration_ms: result.duration, cost_usd: 0, metadata: { free_route: true }
+            duration_ms: result.duration, cost_usd: 0, metadata: { free_route: true, execution_receipt: result.result.execution?.receipt_id || null, sandbox_exit_code: result.result.execution?.exit_code ?? null }
           });
           for (const artifact of result.artifacts) {
             await this.db("agent_artifacts", "POST", {
