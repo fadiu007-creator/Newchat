@@ -73,6 +73,7 @@ b(`model_metrics?${filter}`);
       "Be explicit about assumptions and limitations. Never claim an external action, deployment, test, or file write happened unless a connected tool actually performed it.",
       "Return JSON only: {\"deliverable\":\"...\",\"artifacts\":[{\"name\":\"...\",\"mime_type\":\"text/plain\",\"content\":\"...\"}],\"criterion_evidence\":[{\"criterion\":\"...\",\"evidence\":\"...\",\"status\":\"met|not_met|not_verifiable\"}],\"limitations\":[\"...\"],\"execution\":{\"files\":[{\"path\":\"relative/path\",\"content\":\"...\"}],\"argv\":[\"node\",\"--test\"],\"timeout_ms\":60000}}. For coding tasks execution is mandatory.",
       "For coding tasks, include complete runnable source files in execution.files and a direct argv command. Supported commands start with node or python3. The GitHub Actions sandbox is an ephemeral container with network disabled and no application secrets. Never claim success unless the returned receipt confirms it. For GitHub writes, propose the exact intended operation; the owner must approve it before execution.",
+      "When repository access is needed, return github_operations as an array of exact operation objects. Read operations are read_file {action,repository,path,branch}, list_directory {action,repository,path,branch}, or verify_commit {action,repository,branch}. Write operations are create_branch {action,repository,branch,base,base_sha}, upsert_file {action,repository,path,branch,content,commit_message}, create_pull_request {action,repository,title,body,branch,base}, or merge_pull_request {action,repository,pull_number}. Use only repositories enabled in the user allowlist. Never say a write succeeded before its result is returned.",
       `Goal: ${run.goal}`,
       `Task: ${task.title}`,
       `Description: ${task.description}`,
@@ -115,7 +116,11 @@ b(`model_metrics?${filter}`);
 
     const githubResults: any[] = [];
     let approvalPending: any = null;
-    const githubOperations = Array.isArray(result.github_operations) ? result.github_operations.slice(0, 8) as GithubOperation[] : [];
+    let githubOperations = Array.isArray(result.github_operations) ? result.github_operations.slice(0, 8) as GithubOperation[] : [];
+    const previouslyApproved = await this.db("agent_approvals?run_id=eq." + encodeURIComponent(run.id) + "&task_id=eq." + encodeURIComponent(task.id) + "&user_id=eq." + encodeURIComponent(userId) + "&action_type=eq.github_write&status=eq.approved&consumed_at=is.null&select=id,payload,action_hash&limit=1");
+    if (Array.isArray(previouslyApproved) && previouslyApproved[0]?.payload) {
+      githubOperations = [previouslyApproved[0].payload as GithubOperation];
+    }
     if (githubOperations.length) {
       if (!this.env.GITHUB_APP_TOKEN) throw new Error("GitHub tools are not configured. Add GITHUB_APP_TOKEN to the Cloudflare Worker.");
       const permissions = await this.db("agent_tool_permissions?user_id=eq." + encodeURIComponent(userId) + "&tool_name=eq.github&enabled=eq.true&select=config");
