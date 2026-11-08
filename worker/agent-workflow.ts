@@ -125,7 +125,7 @@ b(`model_metrics?${filter}`);
       githubOperations = [previouslyApproved[0].payload as GithubOperation];
     }
     if (githubOperations.length) {
-      if (!this.env.GITHUB_APP_TOKEN) throw new Error("GitHub tools are not configured. Add GITHUB_APP_TOKEN to the Cloudflare Worker.");
+      if (!this.env.GITHUB_APP_TOKEN && !(this.env.GITHUB_APP_ID && this.env.GITHUB_APP_PRIVATE_KEY && this.env.GITHUB_APP_INSTALLATION_ID)) throw new Error("GitHub tools are not configured. Add GitHub App credentials to the Cloudflare Worker.");
       const permissions = await this.db("agent_tool_permissions?user_id=eq." + encodeURIComponent(userId) + "&tool_name=eq.github&enabled=eq.true&select=config");
       const config = Array.isArray(permissions) ? permissions[0]?.config : null;
       const configuredRepos = Array.isArray(config?.repositories) ? config.repositories.filter((value: unknown) => typeof value === "string") : [];
