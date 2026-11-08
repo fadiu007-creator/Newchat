@@ -1,7 +1,8 @@
 export interface Env {
   ASSETS: Fetcher;
   OPENROUTER_API_KEY?: string;
-  OPENAI_API_KEY?: string;\n  EDENAI_API_KEY?: string;
+  OPENAI_API_KEY?: string;
+  EDENAI_API_KEY?: string;
   SUPABASE_URL?: string;
   SUPABASE_ANON_KEY?: string;
   ALLOWED_ORIGIN?: string;
@@ -66,15 +67,17 @@ export default {
       return json({ error: "Unable to verify your session. Please try again." }, 502, origin);
     }
 
-    const isOpenAI = body.provider === "openai";
-    const apiKey = isOpenAI ? env.OPENAI_API_KEY : env.OPENROUTER_API_KEY;
-    if (!apiKey) return json({
-      error: `${isOpenAI ? "OpenAI" : "OpenRouter"} API key is not configured on the server. Add the corresponding Cloudflare Worker secret.`
+    const providerConfig = {
+      openai: { key: env.OPENAI_API_KEY, name: "OpenAI", endpoint: "https://api.openai.com/v1/chat/completions" },
+      openrouter: { key: env.OPENROUTER_API_KEY, name: "OpenRouter", endpoint: "https://openrouter.ai/api/v1/chat/completions" },
+      edenai: { key: env.EDENAI_API_KEY, name: "Eden AI", endpoint: "https://api.edenai.run/v3/chat/completions" }
+    }[body.provider];
+    if (!providerConfig.key) return json({
+      error: `${providerConfig.name} API key is not configured on the server. Add the corresponding Cloudflare Worker secret.`
     }, 503, origin);
 
-    const endpoint = isOpenAI
-      ? "https://api.openai.com/v1/chat/completions"
-      : "https://openrouter.ai/api/v1/chat/completions";
+    const apiKey = providerConfig.key;
+    const endpoint = providerConfig.endpoint;
     const headers: Record<string, string> = {
       "Authorization": `Bearer ${apiKey}`,
       "Content-Type": "application/json"
