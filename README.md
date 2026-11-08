@@ -38,6 +38,7 @@ Vite runs on port 5173 and proxies `/api` requests to Wrangler on port 8787. Pro
 - `EDENAI_API_KEY`
 - `SUPABASE_URL`
 - `SUPABASE_ANON_KEY`
+- `SUPABASE_SERVICE_ROLE_KEY` (server-only; required for durable agent execution)
 
 The Worker serves both the frontend and `/api/*` from `https://newchat.shqiptare.workers.dev`; keep `ALLOWED_ORIGIN` set to that exact origin. No Pages deployment is required.
 
