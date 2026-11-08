@@ -445,6 +445,48 @@ export default {
 
     const auth = await authenticate(request, env);
     if (isResponse(auth)) return json(await auth.json(), auth.status, origin);
+    const paidModelIds = new Set([
+      "openai/gpt-4.1", "anthropic/claude-sonnet-4", "google/gemini-2.5-pro",
+      "deepseek/deepseek-r1", "x-ai/grok-3"
+    ]);
+    const paidModel = body.provider === "openrouter" && paidModelIds.has(body.model);
+    let paidReservationId: string | null = null;
+    let paidEstimateUsd = 0;
+    if (body.provider === "edenai" && ["openai/gpt-4o", "anthropic/claude-sonnet-4-5", "deepseek/deepseek-r1", "google/gemini-2.5-pro"].includes(body.model)) {
+      return json({ error: "Paid Eden AI routing is disabled until Eden AI returns verifiable per-request pricing and usage." }, 400, origin);
+    }
+    if (paidModel) {
+      if (!env.SUPABASE_SERVICE_ROLE_KEY) return json({ error: "Paid models are disabled until server-side spend enforcement is configured." }, 503, origin);
+      let pricing: { estimatedUsd: number; promptTokens: number; inputRate: number; outputRate: number };
+      try { pricing = await estimateOpenRouterCost(body.model, body.messages, 1024); }
+      catch (error) { return json({ error: error instanceof Error ? error.message : "Could not estimate paid-model cost." }, 503, origin); }
+      paidEstimateUsd = pricing.estimatedUsd;
+      const actionHash = await sha256Hex(JSON.stringify({ provider: body.provider, model: body.model, messages: body.messages, max_tokens: 1024 }));
+      if (!body.approval_id) {
+        const created = await supabaseRequest(env, auth.token, "agent_approvals", "POST", {
+          user_id: auth.userId, action_type: "paid_model",
+          description: "Approve " + body.model + " for this chat request (estimated $" + paidEstimateUsd.toFixed(6) + "; daily cap $1.00).",
+          payload: { provider: body.provider, model: body.model, estimated_cost_usd: paidEstimateUsd, daily_budget_usd: 1, max_tokens: 1024 },
+          action_hash: actionHash, requested_by: "user",
+          expires_at: new Date(Date.now() + 15 * 60_000).toISOString()
+        });
+        if (!created.ok || !Array.isArray(created.data) || !created.data[0]?.id) return json({ error: "Could not create the paid-model approval request." }, 500, origin);
+        return json({ approval_required: true, approval_id: created.data[0].id, model: body.model, estimated_cost_usd: paidEstimateUsd, daily_budget_usd: 1 }, 402, origin);
+      }
+      const approved = await supabaseRequest(env, auth.token,
+        "agent_approvals?id=eq." + encodeURIComponent(body.approval_id) + "&user_id=eq." + encodeURIComponent(auth.userId) + "&action_type=eq.paid_model&action_hash=eq." + actionHash + "&status=eq.approved&consumed_at=is.null&select=id",
+        "GET");
+      if (!approved.ok || !Array.isArray(approved.data) || !approved.data[0]) return json({ error: "Paid-model approval is missing, expired, rejected, or does not match this exact request." }, 403, origin);
+      const reservation = await supabaseServiceRequest(env, "rpc/reserve_paid_model_call", "POST", {
+        p_user_id: auth.userId, p_approval_id: body.approval_id, p_action_hash: actionHash,
+        p_estimated_cost: paidEstimateUsd, p_daily_budget: 1, p_model_id: body.model
+      });
+      if (!reservation.ok || typeof reservation.data !== "string") {
+        return json({ error: "Paid-model request was blocked by the approval or $1 rolling 24-hour spend limit.", detail: reservation.data }, 429, origin);
+      }
+      paidReservationId = reservation.data;
+    }
+
     const providerConfig = {
       openrouter: { key: env.OPENROUTER_API_KEY, name: "OpenRouter", endpoint: "https://openrouter.ai/api/v1/chat/completions" },
       edenai: { key: env.EDENAI_API_KEY, name: "Eden AI", endpoint: "https://api.edenai.run/v3/chat/completions" }
@@ -467,6 +509,16 @@ export default {
       if (!upstream.ok) {
         const detail = typeof result.error === "string" ? result.error : result.error?.message;
         return json({ error: detail || `Provider request failed (${upstream.status}).` }, upstream.status, origin);
+      }
+      if (paidReservationId) {
+        const actualCost = Number.isFinite(Number(result.usage?.cost)) && Number(result.usage?.cost) >= 0
+          ? Number(result.usage?.cost) : paidEstimateUsd;
+        await supabaseServiceRequest(env, "agent_run_spend?id=eq." + encodeURIComponent(paidReservationId), "PATCH", {
+          cost_usd: actualCost,
+          input_tokens: Number(result.usage?.prompt_tokens || 0),
+          output_tokens: Number(result.usage?.completion_tokens || 0),
+          metadata: { reserved: false, estimated_cost_usd: paidEstimateUsd, actual_cost_reported: Number.isFinite(Number(result.usage?.cost)) }
+        });
       }
       const content = result.choices?.[0]?.message?.content;
       const normalized = Array.isArray(content) ? content.map(part => part.text || "").join("") : content;
