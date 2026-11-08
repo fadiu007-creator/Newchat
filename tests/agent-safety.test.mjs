@@ -32,6 +32,8 @@ test("sandbox runner uses an ephemeral network-disabled container with resource 
   }
   assert.match(sandboxRunner, /process\.exit/);
   assert.match(sandboxRunner, /timeout_ms/);
+  assert.match(sandboxRunner, /chmodSync\(dirname\(target\), 0o777\)/);
+  assert.match(sandboxRunner, /chmodSync\(target, 0o666\)/);
   assert.match(sandboxRunner, /resolve\(resultDir, "receipt\.json"\)/);
 });
 
