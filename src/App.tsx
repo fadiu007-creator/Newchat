@@ -56,7 +56,7 @@ export default function App() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const active = conversations.find(c => c.id === activeId) ?? conversations[0];
-  const selectedModel = modelOptions.find(m => m.model === active.model) ?? modelOptions[0];
+  const selectedModel = modelOptions.find(m => m.model === active.model && m.provider === active.provider) ?? modelOptions[0];
   const grouped = useMemo(() => conversations.filter(c => c.messages.length > 0 && c.title.toLowerCase().includes(searchTerm.toLowerCase())), [conversations, searchTerm]);
   useEffect(() => {
     if (!supabase) return;
@@ -282,7 +282,7 @@ export default function App() {
                 <div className="model-menu-title">Choose a model</div>
                 {modelOptions.map(m => <button key={m.provider + m.model} onClick={() => chooseModel(m)} className="model-option">
                   <span className="model-option-icon"><Bot size={15}/></span><span><strong>{m.label}</strong><small>{m.maker} · {m.model}</small></span>
-                  {m.model === active.model && <Check size={15}/>}
+                  {m.model === active.model && m.provider === active.provider && <Check size={15}/>}
                 </button>)}
               </div>}
             </div>
