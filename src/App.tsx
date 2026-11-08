@@ -95,9 +95,10 @@ function AgentWorkspace({ session, onSignIn }: { session: Session | null; onSign
       supabase.from("agent_events").select("id,event_type,message,created_at").eq("run_id", runId).order("created_at", { ascending: false }).limit(30),
       supabase.from("agent_artifacts").select("id,name,mime_type,content_text,created_at").eq("run_id", runId).order("created_at", { ascending: false }).limit(30)
     ]);
-    if (runResult.data) setPlan(previous => previous && previous.run_id === runId ? {
-      ...previous, status: runResult.data.status, summary: runResult.data.summary,
-      success_criteria: runResult.data.success_criteria || [],
+    const runData = runResult.data;
+    if (runData) setPlan(previous => previous && previous.run_id === runId ? {
+      ...previous, status: runData.status, summary: runData.summary,
+      success_criteria: runData.success_criteria || [],
       tasks: taskResult.data || previous.tasks
     } : previous);
     if (eventResult.data) setEvents(eventResult.data as AgentEvent[]);
