@@ -3,4 +3,4 @@ alter table public.conversations
 
 alter table public.conversations
   add constraint conversations_provider_check
-  check (provider in ('openrouter', 'openai', 'edenai'));
+  check (provider in ('openrouter', 'edenai'));
