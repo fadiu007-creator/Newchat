@@ -45,13 +45,15 @@ try {
   rmSync(workspace, { recursive: true, force: true });
   process.exitCode = 0;
   mkdirSync(workspace, { recursive: true });
+  chmodSync(workspace, 0o777);
   for (const file of job.files) {
     const target = resolve(workspace, file.path);
     if (!target.startsWith(workspace + "/") || relative(workspace, target).startsWith("..")) throw new Error("Source path escaped the workspace.");
     mkdirSync(dirname(target), { recursive: true });
+    chmodSync(dirname(target), 0o777);
     writeFileSync(target, file.content, { flag: "wx" });
+    chmodSync(target, 0o666);
   }
-  chmodSync(workspace, 0o777);
   const image = job.language === "python" ? "python:3.12-slim" : "node:22-bookworm-slim";
   const pull = spawnSync("docker", ["pull", image], { encoding: "utf8", timeout: 90000, maxBuffer: 1000000 });
   if (pull.status !== 0) throw new Error("Could not prepare the sandbox runtime image: " + String(pull.stderr || pull.stdout).slice(0, 1000));
