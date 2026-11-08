@@ -467,14 +467,13 @@ export default {
     if (!validMessages) return json({ error: "Invalid message format." }, 400, origin);
     const totalMessageBytes = body.messages.reduce((sum, message) => sum + new TextEncoder().encode(message.content).byteLength, 0);
     if (totalMessageBytes > 128_000) return json({ error: "The conversation exceeds the 128 KB request limit." }, 413, origin);
+    const auth = await authenticate(request, env);
+    if (isResponse(auth)) return json(await auth.json(), auth.status, origin);
     const providerConfig = {
       openrouter: { key: env.OPENROUTER_API_KEY, name: "OpenRouter", endpoint: "https://openrouter.ai/api/v1/chat/completions" },
       edenai: { key: env.EDENAI_API_KEY, name: "Eden AI", endpoint: "https://api.edenai.run/v3/chat/completions" }
     }[body.provider];
     if (!providerConfig.key) return json({ error: providerConfig.name + " API key is not configured on the server." }, 503, origin);
-
-    const auth = await authenticate(request, env);
-    if (isResponse(auth)) return json(await auth.json(), auth.status, origin);
     const paidModelIds = new Set([
       "openai/gpt-4.1", "anthropic/claude-sonnet-4", "google/gemini-2.5-pro",
       "deepseek/deepseek-r1", "x-ai/grok-3"
