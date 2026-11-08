@@ -45,9 +45,12 @@ export class AgentWorkflow extends WorkflowEntrypoint<Env, Params> {
   }
 
   private async event(runId: string, userId: string, eventType: string, message: string, metadata: unknown = {}) {
-    await this.db("agent_events", "POST", { run_id: runId, user_id: userId, event_type: eve
-…[1 chars truncated — re-run with head/grep/tail for full output]…
-b(`model_metrics?${filter}`);
+    await this.db("agent_events", "POST", { run_id: runId, user_id: userId, event_type: eventType, message, metadata });
+  }
+
+  private async recordMetric(model: Model, taskType: string, durationMs: number, passed: boolean) {
+    const filter = `provider=eq.${encodeURIComponent(model.provider)}&model_id=eq.${encodeURIComponent(model.model_id)}&task_type=eq.${encodeURIComponent(taskType)}&select=*`;
+    const rows = await this.db(`model_metrics?${filter}`);
     const old = Array.isArray(rows) ? rows[0] : null;
     const count = Number(old?.sample_count || 0);
     const successes = Number(old?.success_count || 0) + (passed ? 1 : 0);
