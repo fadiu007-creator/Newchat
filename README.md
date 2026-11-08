@@ -8,6 +8,7 @@ A unified AI chat workspace for OpenRouter and OpenAI, designed to support addit
 - Supabase Auth + Postgres with row-level security
 - OpenRouter multi-model gateway
 - Direct OpenAI API integration
+- Eden AI v3 OpenAI-compatible model gateway
 
 ## Local development
 ```bash
