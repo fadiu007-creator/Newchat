@@ -136,8 +136,12 @@ export default function App() {
   }
 
 
+  function updateConversation(id: string, update: (c: Conversation) => Conversation) {
+    setConversations(prev => prev.map(c => c.id === id ? update(c) : c));
+  }
+
   function updateActive(update: (c: Conversation) => Conversation) {
-    setConversations(prev => prev.map(c => c.id === activeId ? update(c) : c));
+    updateConversation(activeId, update);
   }
 
   async function deleteConversation(id: string) {
@@ -194,9 +198,9 @@ export default function App() {
     const value = text.trim();
     if (!value || loading) return;
     if (!session) { setAuthOpen(true); setNotice("Sign in to send messages and save your chat history."); return; }
-    const userMessage: Message = { id: crypto.randomUUID(), role: "user", content: value };
+    const conversationId = active.id;\n    const userMessage: Message = { id: crypto.randomUUID(), role: "user", content: value };
     const history = [...active.messages, userMessage];
-    updateActive(c => ({
+    updateConversation(conversationId, c => ({
       ...c,
       title: c.messages.length === 0 ? value.slice(0, 42) : c.title,
       messages: history
@@ -219,7 +223,7 @@ export default function App() {
       const assistantMessage: Message = {
         id: crypto.randomUUID(), role: "assistant", content: data.content || "The provider returned an empty response."
       };
-      updateActive(c => ({ ...c, messages: [...c.messages, assistantMessage] }));
+      updateConversation(conversationId, c => ({ ...c, messages: [...c.messages, assistantMessage] }));
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unable to reach the AI service.";
       setNotice(message);
