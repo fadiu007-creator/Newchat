@@ -15,6 +15,9 @@ export interface Env {
   };
   OPENROUTER_API_KEY?: string;
   EDENAI_API_KEY?: string;
+  SANDBOX_RUNNER_URL?: string;
+  SANDBOX_RUNNER_TOKEN?: string;
+  GITHUB_APP_TOKEN?: string;
   SUPABASE_URL?: string;
   SUPABASE_ANON_KEY?: string;
   ALLOWED_ORIGIN?: string;
@@ -339,7 +342,9 @@ export default {
     if (url.pathname === "/api/health") return json({
       ok: true, service: "newchat-api",
       capabilities: { chat: true, agentPlanning: true, agentExecution: Boolean(env.SUPABASE_SERVICE_ROLE_KEY && env.AGENT_WORKFLOW) },
+      capabilities: { sandboxAdapter: Boolean(env.SANDBOX_RUNNER_URL && env.SANDBOX_RUNNER_TOKEN), githubAdapter: Boolean(env.GITHUB_APP_TOKEN), independentGithubVerification: Boolean(env.GITHUB_APP_TOKEN), paidModelRouting: false },
       configuration: {
+        sandboxRunner: Boolean(env.SANDBOX_RUNNER_URL && env.SANDBOX_RUNNER_TOKEN), githubApp: Boolean(env.GITHUB_APP_TOKEN),
         supabase: Boolean(env.SUPABASE_URL && env.SUPABASE_ANON_KEY),
         openrouter: Boolean(env.OPENROUTER_API_KEY), edenai: Boolean(env.EDENAI_API_KEY)
       }
