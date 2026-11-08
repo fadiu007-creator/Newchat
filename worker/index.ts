@@ -397,7 +397,7 @@ async function createAgentPlan(request: Request, env: Env, origin: string): Prom
       run_id: run.id, status: "planned", summary: plan.summary,
       success_criteria: plan.success_criteria, tasks: Array.isArray(taskInsert.data) ? taskInsert.data : taskRows,
       planner: { provider: "openrouter", model: "openrouter/free", cost_policy: "free-route-requested" },
-      next: "Execution engine is not enabled yet. Review the plan before starting execution."
+      next: "Review the plan, then start execution. Coding tasks use the isolated GitHub Actions runner; repository writes require owner approval."
     }, 201, origin);
   } catch {
     return json({ error: "Unable to create the agent plan. Check provider connectivity and retry." }, 502, origin);
