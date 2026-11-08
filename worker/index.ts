@@ -63,6 +63,75 @@ async function supabaseRequest(env: Env, token: string, path: string, method: st
   return { ok: response.ok, status: response.status, data };
 }
 
+
+async function startAgentExecution(request: Request, env: Env, origin: string): Promise<Response> {
+  const auth = await authenticate(request, env);
+  if (isResponse(auth)) return json(await auth.json(), auth.status, origin);
+  if (!env.SUPABASE_SERVICE_ROLE_KEY) return json({ error: "Durable agent execution is not configured: add SUPABASE_SERVICE_ROLE_KEY as a Worker secret." }, 503, origin);
+  let body: { run_id?: string };
+  try { body = await request.json() as typeof body; } catch { return json({ error: "Invalid JSON body." }, 400, origin); }
+  const runId = typeof body.run_id === "string" ? body.run_id : "";
+  if (!/^[0-9a-f-]{36}$/i.test(runId)) return json({ error: "A valid run_id is required." }, 400, origin);
+  const found = await supabaseRequest(env, auth.token, `agent_runs?id=eq.${encodeURIComponent(runId)}&select=id,status,workflow_instance_id`, "GET");
+  if (!found.ok || !Array.isArray(found.data) || !found.data[0]) return json({ error: "Agent run not found." }, 404, origin);
+  const run = found.data[0] as { id: string; status: string; workflow_instance_id?: string };
+  if (run.status === "running" || run.status === "completed" || run.status === "cancelled") return json({ error: `Run cannot be started from status ${run.status}.`, status: run.status }, 409, origin);
+  try {
+    const instance = await env.AGENT_WORKFLOW.create({ id: run.id, params: { runId: run.id, userId: auth.userId } });
+    await supabaseRequest(env, auth.token, `agent_runs?id=eq.${encodeURIComponent(run.id)}`, "PATCH", { status: "queued", workflow_instance_id: instance.id, last_error: null });
+    await supabaseRequest(env, auth.token, "agent_events", "POST", { run_id: run.id, user_id: auth.userId, event_type: "execution_queued", message: "Durable execution queued in Cloudflare Workflows." });
+    return json({ run_id: run.id, workflow_id: instance.id, status: "queued" }, 202, origin);
+  } catch (error) {
+    return json({ error: error instanceof Error ? error.message : "Could not start durable execution." }, 502, origin);
+  }
+}
+
+async function controlAgentExecution(request: Request, env: Env, origin: string): Promise<Response> {
+  const auth = await authenticate(request, env);
+  if (isResponse(auth)) return json(await auth.json(), auth.status, origin);
+  let body: { run_id?: string; action?: string };
+  try { body = await request.json() as typeof body; } catch { return json({ error: "Invalid JSON body." }, 400, origin); }
+  const runId = typeof body.run_id === "string" ? body.run_id : "";
+  const action = body.action;
+  if (!/^[0-9a-f-]{36}$/i.test(runId) || !["pause", "resume", "cancel"].includes(action || "")) return json({ error: "A valid run_id and action (pause, resume, cancel) are required." }, 400, origin);
+  const found = await supabaseRequest(env, auth.token, `agent_runs?id=eq.${encodeURIComponent(runId)}&select=id,status,workflow_instance_id`, "GET");
+  if (!found.ok || !Array.isArray(found.data) || !found.data[0]) return json({ error: "Agent run not found." }, 404, origin);
+  const run = found.data[0] as { id: string; status: string; workflow_instance_id?: string };
+  if (!run.workflow_instance_id) return json({ error: "This run has no active Workflow instance." }, 409, origin);
+  try {
+    const instance = await env.AGENT_WORKFLOW.get(run.workflow_instance_id);
+    if (action === "pause") {
+      await instance.pause();
+      await supabaseRequest(env, auth.token, `agent_runs?id=eq.${encodeURIComponent(run.id)}`, "PATCH", { status: "paused", paused_at: new Date().toISOString() });
+    } else if (action === "resume") {
+      await instance.resume();
+      await supabaseRequest(env, auth.token, `agent_runs?id=eq.${encodeURIComponent(run.id)}`, "PATCH", { status: "queued", paused_at: null });
+    } else {
+      await instance.terminate();
+      await supabaseRequest(env, auth.token, `agent_runs?id=eq.${encodeURIComponent(run.id)}`, "PATCH", { status: "cancelled", finished_at: new Date().toISOString(), cancel_requested_at: new Date().toISOString() });
+    }
+    await supabaseRequest(env, auth.token, "agent_events", "POST", { run_id: run.id, user_id: auth.userId, event_type: `execution_${action}d`, message: `Execution ${action} requested by the owner.` });
+    return json({ run_id: run.id, status: action === "pause" ? "paused" : action === "resume" ? "queued" : "cancelled" }, 200, origin);
+  } catch (error) {
+    return json({ error: error instanceof Error ? error.message : "Could not control Workflow instance." }, 502, origin);
+  }
+}
+
+async function getAgentExecutionStatus(request: Request, env: Env, origin: string): Promise<Response> {
+  const auth = await authenticate(request, env);
+  if (isResponse(auth)) return json(await auth.json(), auth.status, origin);
+  const runId = new URL(request.url).searchParams.get("run_id") || "";
+  if (!/^[0-9a-f-]{36}$/i.test(runId)) return json({ error: "A valid run_id is required." }, 400, origin);
+  const result = await supabaseRequest(env, auth.token, `agent_runs?id=eq.${encodeURIComponent(runId)}&select=id,status,workflow_instance_id,total_cost_usd,last_error,updated_at`, "GET");
+  if (!result.ok || !Array.isArray(result.data) || !result.data[0]) return json({ error: "Agent run not found." }, 404, origin);
+  const run = result.data[0] as { workflow_instance_id?: string; [key: string]: unknown };
+  let workflow: unknown = null;
+  if (run.workflow_instance_id) {
+    try { workflow = await (await env.AGENT_WORKFLOW.get(run.workflow_instance_id)).status(); } catch { workflow = { status: "unavailable" }; }
+  }
+  return json({ run: result.data[0], workflow }, 200, origin);
+}
+
 function parsePlan(raw: string): { summary: string; success_criteria: string[]; tasks: Array<{ key: string; title: string; description: string; acceptance_criteria: string[]; depends_on: string[] }> } | null {
   const cleaned = raw.trim().replace(/^\`\`\`(?:json)?\s*/i, "").replace(/\s*\`\`\`$/, "");
   const start = cleaned.indexOf("{");
@@ -232,13 +301,13 @@ export default {
     if (!url.pathname.startsWith("/api/")) return env.ASSETS.fetch(request);
     if (url.pathname === "/api/health") return json({
       ok: true, service: "newchat-api",
-      capabilities: { chat: true, agentPlanning: true, agentExecution: false },
+      capabilities: { chat: true, agentPlanning: true, agentExecution: Boolean(env.SUPABASE_SERVICE_ROLE_KEY && env.AGENT_WORKFLOW) },
       configuration: {
         supabase: Boolean(env.SUPABASE_URL && env.SUPABASE_ANON_KEY),
         openrouter: Boolean(env.OPENROUTER_API_KEY), edenai: Boolean(env.EDENAI_API_KEY)
       }
     }, 200, origin);
-    if (url.pathname === "/api/agent/plan" && request.method === "POST") return createAgentPlan(request, env, origin);
+    if (url.pathname === "/api/agent/plan" && request.method === "POST") return createAgentPlan(request, env, origin);\n    if (url.pathname === "/api/agent/start" && request.method === "POST") return startAgentExecution(request, env, origin);\n    if (url.pathname === "/api/agent/control" && request.method === "POST") return controlAgentExecution(request, env, origin);\n    if (url.pathname === "/api/agent/status" && request.method === "GET") return getAgentExecutionStatus(request, env, origin);
     if (url.pathname !== "/api/chat" || request.method !== "POST") return json({ error: "Not found" }, 404, origin);
 
     let body: ChatRequest;
