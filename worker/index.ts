@@ -111,8 +111,8 @@ async function estimateOpenRouterCost(model: string, messages: ChatMessage[], ma
   if (!entry || !Number.isFinite(inputRate) || !Number.isFinite(outputRate) || inputRate < 0 || outputRate < 0) {
     throw new Error("Current per-token pricing is unavailable for this paid model; the request was blocked.");
   }
-  const promptTokens = Math.max(1, Math.ceil(messages.reduce((sum, message) => sum + message.content.length, 0) / 4));
-  const estimate = Math.max(0.000001, promptTokens * inputRate + maxTokens * outputRate);
+  const promptTokens = Math.max(1, messages.reduce((sum, message) => sum + new TextEncoder().encode(message.content).byteLength, 0));
+  const estimate = Math.max(0.000001, (promptTokens * inputRate + maxTokens * outputRate) * 1.25);
   return { estimatedUsd: Math.ceil(estimate * 100000000) / 100000000, promptTokens, inputRate, outputRate };
 }
 
@@ -530,8 +530,8 @@ export default {
           ? Number(result.usage?.cost) : paidEstimateUsd;
         await supabaseServiceRequest(env, "agent_run_spend?id=eq." + encodeURIComponent(paidReservationId), "PATCH", {
           cost_usd: actualCost,
-          input_tokens: Number(result.usage?.prompt_tokens || 0),
-          output_tokens: Number(result.usage?.completion_tokens || 0),
+          input_tokens: Math.max(0, Math.floor(Number(result.usage?.prompt_tokens) || 0)),
+          output_tokens: Math.max(0, Math.floor(Number(result.usage?.completion_tokens) || 0)),
           metadata: { reserved: false, estimated_cost_usd: paidEstimateUsd, actual_cost_reported: Number.isFinite(Number(result.usage?.cost)) }
         });
       }
