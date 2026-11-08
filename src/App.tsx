@@ -97,7 +97,7 @@ export default function App() {
           setActiveId(fresh.id);
         }
         setHistoryLoaded(true);
-      }).catch(error => {
+      }, (error: unknown) => {
         if (cancelled) return;
         setNotice(error instanceof Error ? "Could not load saved conversations: " + error.message : "Could not load saved conversations.");
         setHistoryLoaded(true);
