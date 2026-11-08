@@ -227,3 +227,27 @@ button{color:inherit;cursor:pointer}
 .github-enable-row input {
   accent-color: #8b7cff;
 }
+
+
+.agent-approval-details {
+  margin-top: 10px;
+  color: var(--muted, #a1a1aa);
+  font-size: 12px;
+}
+.agent-approval-details summary {
+  cursor: pointer;
+  color: var(--text, #f4f4f5);
+}
+.agent-approval-payload {
+  max-height: 280px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding: 10px;
+  margin-top: 8px;
+  border: 1px solid var(--border, #34343b);
+  border-radius: 8px;
+  background: var(--surface, #17171c);
+  color: var(--text, #f4f4f5);
+  font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
