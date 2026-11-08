@@ -323,7 +323,10 @@ export default {
     if (url.pathname === "/api/agent/plan" && request.method === "POST") return createAgentPlan(request, env, origin);
     if (url.pathname === "/api/agent/start" && request.method === "POST") return startAgentExecution(request, env, origin);
     if (url.pathname === "/api/agent/control" && request.method === "POST") return controlAgentExecution(request, env, origin);
-    if (url.pathname === "/api/agent/status" && request.method === "GET") return getAgentExecutionStatus(request, env, origin);\n    if (url.pathname === "/api/agent/start" && request.method === "POST") return startAgentExecution(request, env, origin);\n    if (url.pathname === "/api/agent/control" && request.method === "POST") return controlAgentExecution(request, env, origin);\n    if (url.pathname === "/api/agent/status" && request.method === "GET") return getAgentExecutionStatus(request, env, origin);
+    if (url.pathname === "/api/agent/status" && request.method === "GET") return getAgentExecutionStatus(request, env, origin);
+    if (url.pathname === "/api/agent/start" && request.method === "POST") return startAgentExecution(request, env, origin);
+    if (url.pathname === "/api/agent/control" && request.method === "POST") return controlAgentExecution(request, env, origin);
+    if (url.pathname === "/api/agent/status" && request.method === "GET") return getAgentExecutionStatus(request, env, origin);
     if (url.pathname !== "/api/chat" || request.method !== "POST") return json({ error: "Not found" }, 404, origin);
 
     let body: ChatRequest;
