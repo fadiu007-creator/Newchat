@@ -1,14 +1,13 @@
 # Newchat
 
-A unified AI chat workspace for OpenRouter and OpenAI, designed to support additional gateways such as Eden AI and LiteLLM.
+A unified AI chat workspace using provider gateways, with OpenRouter and Eden AI integrations.
 
 ## Stack
 - React + TypeScript + Vite
 - Cloudflare Workers API
 - Supabase email/password Auth + Postgres with row-level security
 - OpenRouter multi-model gateway
-- Direct OpenAI API integration
-- Eden AI v3 OpenAI-compatible model gateway
+- Eden AI v3 model gateway
 
 ## Local development
 ```bash
@@ -36,7 +35,6 @@ Vite runs on port 5173 and proxies `/api` requests to Wrangler on port 8787. Pro
 
 **Worker runtime secrets** (Worker Settings → Variables and Secrets):
 - `OPENROUTER_API_KEY`
-- `OPENAI_API_KEY`
 - `EDENAI_API_KEY`
 - `SUPABASE_URL`
 - `SUPABASE_ANON_KEY`
@@ -44,4 +42,4 @@ Vite runs on port 5173 and proxies `/api` requests to Wrangler on port 8787. Pro
 Set `ALLOWED_ORIGIN` in `wrangler.toml` to the exact production frontend origin.
 
 ## Current status
-The repository contains the application scaffold, OpenRouter/OpenAI/Eden AI provider routing, Supabase email/password authentication UI, per-user conversation persistence with row-level security, and conversation search/rename/delete/Markdown export. Frontend Supabase environment variables and Cloudflare Worker secrets must be configured by the project owner before hosted authentication and chat requests can work. Google OAuth is not part of the current build.
+The repository contains the application scaffold, OpenRouter/Eden AI provider routing, Supabase email/password authentication UI, per-user conversation persistence with row-level security, and conversation search/rename/delete/Markdown export. Frontend Supabase environment variables and Cloudflare Worker secrets must be configured by the project owner before hosted authentication and chat requests can work. Google OAuth is not part of the current build.
