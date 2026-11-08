@@ -29,7 +29,7 @@ Vite runs on port 5173 and proxies `/api` requests to Wrangler on port 8787. Pro
 
 ## Cloudflare Worker secrets
 - `OPENROUTER_API_KEY`
-- `OPENAI_API_KEY`
+- `OPENAI_API_KEY`\n- `EDENAI_API_KEY`
 - `SUPABASE_URL`
 - `SUPABASE_ANON_KEY`
 
