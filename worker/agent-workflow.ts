@@ -122,7 +122,7 @@ export class AgentWorkflow extends WorkflowEntrypoint<Env, Params> {
 
     const githubResults: any[] = [];
     let approvalPending: any = null;
-    let githubOperations = Array.isArray(result.github_operations) ? result.github_operations.slice(0, 8) as GithubOperation[] : [];
+    let githubOperations = Array.isArray(result.github_operations) ? result.github_operations.slice(0, 4) as GithubOperation[] : [];
     const previouslyApproved = await this.db("agent_approvals?run_id=eq." + encodeURIComponent(run.id) + "&task_id=eq." + encodeURIComponent(task.id) + "&user_id=eq." + encodeURIComponent(userId) + "&action_type=eq.github_write&status=eq.approved&consumed_at=is.null&select=id,payload,action_hash&limit=1");
     if (Array.isArray(previouslyApproved) && previouslyApproved[0]?.payload) {
       githubOperations = [previouslyApproved[0].payload as GithubOperation];
