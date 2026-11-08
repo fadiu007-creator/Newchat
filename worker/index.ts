@@ -55,8 +55,28 @@ export default {
       return json({ error: "Invalid chat request." }, 400, origin);
     }
     const allowedModels = {
-      openrouter: ["openai/gpt-4.1", "anthropic/claude-sonnet-4", "google/gemini-2.5-pro", "deepseek/deepseek-r1", "x-ai/grok-3"],
-      edenai: ["openai/gpt-4o", "anthropic/claude-sonnet-4-5", "deepseek/deepseek-r1", "google/gemini-2.5-pro"]
+      openrouter: [
+        "openrouter/free",
+        "nvidia/nemotron-3-ultra-550b-a55b:free",
+        "nvidia/nemotron-3.5-super-vl:free",
+        "nvidia/nemotron-3.5-lightning:free",
+        "cohere/north-mini-code:free",
+        "dots-studio/dots-3-note-preview:free",
+        "recursive/flint-v1.0:free",
+        "liquid/lfm-3-1.7b:free",
+        "openai/gpt-4.1", "anthropic/claude-sonnet-4", "google/gemini-2.5-pro",
+        "deepseek/deepseek-r1", "x-ai/grok-3"
+      ],
+      edenai: [
+        "google/gemma-4-31b-it",
+        "google/gemma-4-26b-a4b-it",
+        "together_ai/Prism-ML/Ternary-Bonsai-27B",
+        "cloudflare/@cf/mistral/mistral-7b-instruct-v0.2-lora",
+        "cloudflare/@cf/google/gemma-7b-it-lora",
+        "cloudflare/@cf/google/gemma-2b-it-lora",
+        "openai/gpt-4o", "anthropic/claude-sonnet-4-5",
+        "deepseek/deepseek-r1", "google/gemini-2.5-pro"
+      ]
     }[body.provider];
     if (!allowedModels.includes(body.model)) {
       return json({ error: "This model is not enabled for the selected provider." }, 400, origin);
@@ -104,7 +124,7 @@ export default {
       const upstream = await fetch(endpoint, {
         method: "POST",
         headers,
-        body: JSON.stringify({ model: body.model, messages: body.messages, stream: false })
+        body: JSON.stringify({ model: body.model, messages: body.messages, max_tokens: 1024, stream: false })
       });
       const result = await upstream.json() as {
         error?: { message?: string } | string;
