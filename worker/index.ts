@@ -426,7 +426,10 @@ export default {
         openrouter: Boolean(env.OPENROUTER_API_KEY), edenai: Boolean(env.EDENAI_API_KEY)
       }
     }, 200, origin);
-    if (url.pathname === "/api/agent/plan" && request.method === "POST") return createAgentPlan(request, env, origin);\n    if (url.pathname === "/api/agent/start" && request.method === "POST") return startAgentExecution(request, env, origin);\n    if (url.pathname === "/api/agent/control" && request.method === "POST") return controlAgentExecution(request, env, origin);\n    if (url.pathname === "/api/agent/status" && request.method === "GET") return getAgentExecutionStatus(request, env, origin);
+    if (url.pathname === "/api/agent/plan" && request.method === "POST") return createAgentPlan(request, env, origin);
+    if (url.pathname === "/api/agent/start" && request.method === "POST") return startAgentExecution(request, env, origin);
+    if (url.pathname === "/api/agent/control" && request.method === "POST") return controlAgentExecution(request, env, origin);
+    if (url.pathname === "/api/agent/status" && request.method === "GET") return getAgentExecutionStatus(request, env, origin);
     if (url.pathname === "/api/agent/approval/decision" && request.method === "POST") return decideAgentApproval(request, env, origin);
     if (url.pathname !== "/api/chat" || request.method !== "POST") return json({ error: "Not found" }, 404, origin);
 
