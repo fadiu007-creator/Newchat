@@ -1,0 +1,70 @@
+name: Newchat isolated sandbox
+run-name: Newchat sandbox ${{ inputs.request_id }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      request_id:
+        description: Unique sandbox request ID
+        required: true
+        type: string
+      payload:
+        description: Base64-encoded bounded sandbox job
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  checks: write
+
+jobs:
+  sandbox:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Execute in network-isolated ephemeral container
+        id: execute
+        env:
+          NEWCHAT_SANDBOX_REQUEST_ID: ${{ inputs.request_id }}
+          NEWCHAT_SANDBOX_PAYLOAD: ${{ inputs.payload }}
+        run: node scripts/agent-sandbox-runner.mjs
+      - name: Publish independent execution receipt
+        if: always()
+        uses: actions/github-script@v7
+        env:
+          NEWCHAT_SANDBOX_REQUEST_ID: ${{ inputs.request_id }}
+        with:
+          script: |
+            const fs = require('fs');
+            const path = 'sandbox-result/receipt.json';
+            const receipt = fs.existsSync(path)
+              ? JSON.parse(fs.readFileSync(path, 'utf8'))
+              : { request_id: process.env.NEWCHAT_SANDBOX_REQUEST_ID, passed: false, exit_code: 125, stdout: '', stderr: 'Sandbox runner did not produce a receipt.', timed_out: false };
+            const summary = JSON.stringify(receipt).slice(0, 12000);
+            await github.rest.checks.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              name: 'Newchat sandbox',
+              head_sha: context.sha,
+              external_id: process.env.NEWCHAT_SANDBOX_REQUEST_ID,
+              status: 'completed',
+              conclusion: receipt.passed ? 'success' : 'failure',
+              output: {
+                title: receipt.passed ? 'Sandbox execution passed' : 'Sandbox execution failed',
+                summary
+              }
+            });
+      - name: Upload execution receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: newchat-sandbox-${{ inputs.request_id }}
+          path: sandbox-result/receipt.json
+          if-no-files-found: ignore
+          retention-days: 1
