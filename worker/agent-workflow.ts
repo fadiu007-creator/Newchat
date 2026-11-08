@@ -67,7 +67,7 @@ export class AgentWorkflow extends WorkflowEntrypoint<Env, Params> {
     else await this.db("model_metrics", "POST", values);
   }
 
-  private async completeTask(task: Task, run: any, userId: string, model: Model, attempt: number, previousFailure = "") {
+  private async completeTask(task: Task, run: any, userId: string, model: Model, attempt: number, previousFailure = ""): Promise<{ result: any; artifacts: any[]; duration: number; passed: boolean; approval_pending?: boolean }> {
     const started = Date.now();
     const endpoint = model.provider === "openrouter"
       ? "https://openrouter.ai/api/v1/chat/completions"
