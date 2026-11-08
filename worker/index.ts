@@ -1,4 +1,5 @@
 export interface Env {
+  ASSETS: Fetcher;
   OPENROUTER_API_KEY?: string;
   OPENAI_API_KEY?: string;
   ALLOWED_ORIGIN?: string;
@@ -30,6 +31,7 @@ export default {
       }
     });
     const url = new URL(request.url);
+    if (!url.pathname.startsWith("/api/")) return env.ASSETS.fetch(request);
     if (url.pathname === "/api/health") return json({ ok: true, service: "newchat-api" }, 200, origin);
     if (url.pathname !== "/api/chat" || request.method !== "POST") return json({ error: "Not found" }, 404, origin);
 
