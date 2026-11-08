@@ -1,7 +1,9 @@
 export interface Env {
   ASSETS: Fetcher;
   OPENROUTER_API_KEY?: string;
-  OPENAI_API_KEY?: string;\n  SUPABASE_URL?: string;\n  SUPABASE_ANON_KEY?: string;
+  OPENAI_API_KEY?: string;
+  SUPABASE_URL?: string;
+  SUPABASE_ANON_KEY?: string;
   ALLOWED_ORIGIN?: string;
 }
 
