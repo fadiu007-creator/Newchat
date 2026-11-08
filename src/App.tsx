@@ -106,15 +106,26 @@ export default function App() {
 
   async function submitAuth(event: FormEvent) {
     event.preventDefault();
-    if (!supabase) return;
-    setAuthBusy(true); setAuthError("");
-    const result = authMode === "signup"
-      ? await supabase.auth.signUp({ email: authEmail, password: authPassword })
-      : await supabase.auth.signInWithPassword({ email: authEmail, password: authPassword });
-    setAuthBusy(false);
-    if (result.error) setAuthError(result.error.message);
-    else if (authMode === "signup" && !result.data.session) setAuthError("Check your email to confirm your account, then sign in.");
-    else setAuthOpen(false);
+    if (!supabase || authBusy) return;
+    setAuthBusy(true);
+    setAuthError("");
+    try {
+      const result = authMode === "signup"
+        ? await supabase.auth.signUp({ email: authEmail.trim(), password: authPassword })
+        : await supabase.auth.signInWithPassword({ email: authEmail.trim(), password: authPassword });
+      if (result.error) {
+        setAuthError(result.error.message);
+      } else if (authMode === "signup" && !result.data.session) {
+        setAuthError("Check your email to confirm your account, then sign in.");
+      } else {
+        setAuthOpen(false);
+        setAuthPassword("");
+      }
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : "Authentication failed. Please try again.");
+    } finally {
+      setAuthBusy(false);
+    }
   }
 
   async function signOut() {
