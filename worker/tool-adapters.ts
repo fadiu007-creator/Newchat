@@ -177,7 +177,7 @@ export async function executeSandbox(env: ToolEnv, input: SandboxRequest, reques
 
   const runsUrl = `https://api.github.com/repos/${repo}/actions/workflows/agent-sandbox.yml/runs?event=workflow_dispatch&branch=main&per_page=30`;
   let run: any = null;
-  const deadline = Date.now() + 150_000;
+  const deadline = Date.now() + 100_000;
   while (Date.now() < deadline) {
     const response = await fetch(runsUrl, { headers: { Authorization: "Bearer " + token, Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" } });
     if (!response.ok) throw new Error(`Could not inspect sandbox workflow runs (HTTP ${response.status}).`);
@@ -190,7 +190,7 @@ export async function executeSandbox(env: ToolEnv, input: SandboxRequest, reques
     if (run?.status === "completed") break;
     await sleep(5000);
   }
-  if (!run || run.status !== "completed") throw new Error("GitHub Actions sandbox did not finish within 150 seconds.");
+  if (!run || run.status !== "completed") throw new Error("GitHub Actions sandbox did not finish within 100 seconds.");
 
   const checksResponse = await fetch(`https://api.github.com/repos/${repo}/commits/${run.head_sha}/check-runs?filter=all&per_page=100`, {
     headers: { Authorization: "Bearer " + token, Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" }
