@@ -165,7 +165,8 @@ function AgentWorkspace({ session, onSignIn }: { session: Session | null; onSign
       supabase.from("agent_runs").select("id,status,summary,success_criteria").eq("id", runId).maybeSingle(),
       supabase.from("agent_tasks").select("id,task_key,position,title,description,acceptance_criteria,dependencies,status,verification_status,result").eq("run_id", runId).order("position"),
       supabase.from("agent_events").select("id,event_type,message,created_at").eq("run_id", runId).order("created_at", { ascending: false }).limit(30),
-      supabase.from("agent_artifacts").select("id,name,mime_type,content_text,created_at").eq("run_id", runId).order("created_at", { ascending: false }).limit(30)
+      supabase.from("agent_artifacts").select("id,name,mime_type,content_text,created_at").eq("run_id", runId).order("created_at", { ascending: false }).limit(30),
+      supabase.from("agent_approvals").select("id,run_id,action_type,description,payload,created_at,expires_at").eq("run_id", runId).eq("status", "pending").order("created_at", { ascending: false }).limit(20)
     ]);
     const runData = runResult.data;
     if (runData) setPlan(previous => previous && previous.run_id === runId ? {
@@ -175,6 +176,7 @@ function AgentWorkspace({ session, onSignIn }: { session: Session | null; onSign
     } : previous);
     if (eventResult.data) setEvents(eventResult.data as AgentEvent[]);
     if (artifactResult.data) setArtifacts(artifactResult.data as AgentArtifact[]);
+    if (approvalResult.data) setPendingApprovals(approvalResult.data as AgentApproval[]);
   }
 
   async function runAction(action: "start" | "pause" | "resume" | "cancel") {
