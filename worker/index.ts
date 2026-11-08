@@ -34,7 +34,15 @@ export default {
     });
     const url = new URL(request.url);
     if (!url.pathname.startsWith("/api/")) return env.ASSETS.fetch(request);
-    if (url.pathname === "/api/health") return json({\n      ok: true,\n      service: "newchat-api",\n      configuration: {\n        supabase: Boolean(env.SUPABASE_URL && env.SUPABASE_ANON_KEY),\n        openrouter: Boolean(env.OPENROUTER_API_KEY),\n        edenai: Boolean(env.EDENAI_API_KEY)\n      }\n    }, 200, origin);
+    if (url.pathname === "/api/health") return json({
+      ok: true,
+      service: "newchat-api",
+      configuration: {
+        supabase: Boolean(env.SUPABASE_URL && env.SUPABASE_ANON_KEY),
+        openrouter: Boolean(env.OPENROUTER_API_KEY),
+        edenai: Boolean(env.EDENAI_API_KEY)
+      }
+    }, 200, origin);
     if (url.pathname !== "/api/chat" || request.method !== "POST") return json({ error: "Not found" }, 404, origin);
 
     let body: ChatRequest;
