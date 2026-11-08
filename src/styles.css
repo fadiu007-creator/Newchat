@@ -187,3 +187,43 @@ button{color:inherit;cursor:pointer}
 .agent-event-list li strong{text-transform:capitalize}
 .agent-event-list li time{opacity:.6;font-size:11px}
 @media(max-width:650px){.agent-event-list li{grid-template-columns:1fr}.agent-event-list li time{grid-column:1}}
+
+
+.github-tools-panel {
+  margin-top: 20px;
+}
+.github-tools-panel > p,
+.github-tools-panel .agent-strategy-note {
+  color: var(--muted, #8b8b98);
+  font-size: 13px;
+  line-height: 1.55;
+}
+.github-repo-field {
+  display: grid;
+  gap: 8px;
+  margin: 14px 0;
+  color: var(--text, #f4f4f5);
+  font-size: 13px;
+  font-weight: 600;
+}
+.github-repo-field input {
+  width: 100%;
+  min-width: 0;
+  padding: 11px 12px;
+  border: 1px solid var(--border, #34343b);
+  border-radius: 10px;
+  background: var(--surface, #17171c);
+  color: inherit;
+  font: inherit;
+}
+.github-enable-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 12px 0 16px;
+  color: var(--text, #f4f4f5);
+  font-size: 13px;
+}
+.github-enable-row input {
+  accent-color: #8b7cff;
+}
