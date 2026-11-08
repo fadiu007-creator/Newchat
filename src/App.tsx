@@ -276,6 +276,25 @@ export default function App() {
           <div className="disclaimer">Newchat can make mistakes. Verify important information.</div>
         </div>
       </main>
+      {authOpen && <div className="auth-backdrop" role="presentation" onMouseDown={e => { if (e.target === e.currentTarget) setAuthOpen(false); }}>
+        <section className="auth-card" role="dialog" aria-modal="true" aria-labelledby="auth-title">
+          <button className="auth-close" onClick={() => setAuthOpen(false)} aria-label="Close"><X size={18}/></button>
+          <div className="welcome-icon"><Sparkles size={21}/></div>
+          <h2 id="auth-title">{authMode === "signin" ? "Welcome back" : "Create your account"}</h2>
+          <p>Sign in to save and sync your conversations.</p>
+          {!supabaseConfigured ? <div className="error-notice">Supabase is not configured. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to your environment.</div> : <>
+            <button className="google-button" onClick={() => void signInWithGoogle()} disabled={authBusy}>Continue with Google</button>
+            <div className="auth-divider">or continue with email</div>
+            <form onSubmit={submitAuth} className="auth-form">
+              <input type="email" value={authEmail} onChange={e => setAuthEmail(e.target.value)} placeholder="Email address" required/>
+              <input type="password" value={authPassword} onChange={e => setAuthPassword(e.target.value)} placeholder="Password (minimum 6 characters)" minLength={6} required/>
+              <button type="submit" disabled={authBusy}>{authBusy ? "Please wait…" : authMode === "signin" ? "Sign in" : "Create account"}</button>
+            </form>
+            {authError && <div className="auth-error">{authError}</div>}
+            <button className="auth-switch" onClick={() => { setAuthMode(authMode === "signin" ? "signup" : "signin"); setAuthError(""); }}>{authMode === "signin" ? "New to Newchat? Create an account" : "Already have an account? Sign in"}</button>
+          </>}
+        </section>
+      </div>}
     </div>
   );
 }
