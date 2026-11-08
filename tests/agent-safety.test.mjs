@@ -13,6 +13,8 @@ const worker = await readFile(new URL("../worker/index.ts", import.meta.url), "u
 const sandboxWorkflow = await readFile(new URL("../.github/workflows/agent-sandbox.yml", import.meta.url), "utf8");
 const sandboxRunner = await readFile(new URL("../scripts/agent-sandbox-runner.mjs", import.meta.url), "utf8");
 const paidMigration = await readFile(new URL("../supabase/migrations/014_agent_paid_model_approval_reservation.sql", import.meta.url), "utf8");
+const spendMigration = await readFile(new URL("../supabase/migrations/015_agent_chat_spend_without_run_id.sql", import.meta.url), "utf8");
+const deployWorkflow = await readFile(new URL("../.github/workflows/deploy-cloudflare.yml", import.meta.url), "utf8");
 
 test("sandbox is dispatched to GitHub Actions and requires an independent check-run receipt", () => {
   assert.match(adapters, /actions\/workflows\/agent-sandbox\.yml\/dispatches/);
@@ -29,7 +31,7 @@ test("sandbox runner uses an ephemeral network-disabled container with resource 
   }
   assert.match(sandboxRunner, /process\.exit/);
   assert.match(sandboxRunner, /timeout_ms/);
-  assert.match(sandboxRunner, /sandbox-result\/receipt\.json/);
+  assert.match(sandboxRunner, /resolve\(resultDir, "receipt\.json"\)/);
 });
 
 test("sandbox validator accepts a bounded JavaScript job", () => {
@@ -51,6 +53,8 @@ test("sandbox validator rejects traversal, duplicate paths, oversized source and
 
 test("GitHub operations enforce repository allowlists and expose explicit bounded operations", () => {
   assert.match(adapters, /GITHUB_ALLOWED_REPOSITORIES/);
+  assert.match(adapters, /RSASSA-PKCS1-v1_5/);
+  assert.match(adapters, /GITHUB_APP_INSTALLATION_ID/);
   assert.match(adapters, /allowed\.includes\(repo\)/);
   assert.match(adapters, /read_file.*list_directory.*create_branch.*upsert_file/s);
   assert.match(adapters, /create_pull_request/);
