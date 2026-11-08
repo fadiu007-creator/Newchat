@@ -1,4 +1,4 @@
-import type { AgentSandbox } from "./sandbox";
+import { executeSandbox, executeGithubOperation, sha256Hex, type GithubOperation } from "./tool-adapters";
 import { WorkflowEntrypoint, WorkflowStep } from "cloudflare:workers";
 import type { WorkflowEvent } from "cloudflare:workers";
 
@@ -7,7 +7,9 @@ type Env = {
   SUPABASE_SERVICE_ROLE_KEY?: string;
   OPENROUTER_API_KEY?: string;
   EDENAI_API_KEY?: string;
-  AGENT_SANDBOX: DurableObjectNamespace<AgentSandbox>;
+  GITHUB_APP_TOKEN?: string;
+  GITHUB_SANDBOX_REPOSITORY?: string;
+  GITHUB_ALLOWED_REPOSITORIES?: string;
 };
 type Params = { runId: string; userId: string };
 type Task = {
@@ -70,7 +72,7 @@ b(`model_metrics?${filter}`);
       "You are executing one bounded task inside Newchat. Produce a concrete deliverable, not a plan.",
       "Be explicit about assumptions and limitations. Never claim an external action, deployment, test, or file write happened unless a connected tool actually performed it.",
       "Return JSON only: {\"deliverable\":\"...\",\"artifacts\":[{\"name\":\"...\",\"mime_type\":\"text/plain\",\"content\":\"...\"}],\"criterion_evidence\":[{\"criterion\":\"...\",\"evidence\":\"...\",\"status\":\"met|not_met|not_verifiable\"}],\"limitations\":[\"...\"],\"execution\":{\"files\":[{\"path\":\"relative/path\",\"content\":\"...\"}],\"argv\":[\"node\",\"--test\"],\"timeout_ms\":60000}}. For coding tasks execution is mandatory.",
-      "For coding tasks, include complete runnable source files in execution.files, and a safe direct argv command that runs tests or validation. No shell chaining. The sandbox has no network and no application secrets. Do not claim a run succeeded unless the execution receipt confirms exit code zero.",
+      "For coding tasks, include complete runnable source files in execution.files and a direct argv command. Supported commands start with node or python3. The GitHub Actions sandbox is an ephemeral container with network disabled and no application secrets. Never claim success unless the returned receipt confirms it. For GitHub writes, propose the exact intended operation; the owner must approve it before execution.",
       `Goal: ${run.goal}`,
       `Task: ${task.title}`,
       `Description: ${task.description}`,
@@ -105,9 +107,48 @@ b(`model_metrics?${filter}`);
     let execution: any = null;
     if (task.task_type === "coding") {
       if (!result.execution || !Array.isArray(result.execution.files) || !Array.isArray(result.execution.argv)) throw new Error("Coding task did not provide executable files and a bounded command.");
-      const sandbox = this.env.AGENT_SANDBOX.getByName(`agent-${run.id}-${task.id}`);
-      execution = await sandbox.execute({ files: result.execution.files, argv: result.execution.argv, timeout_ms: result.execution.timeout_ms });
+      const language = result.execution.language === "python" || result.execution.argv[0] === "python3"
+        ? "python" : result.execution.language === "typescript" || result.execution.files.some((file: any) => String(file.path || "").endsWith(".ts"))
+          ? "typescript" : "javascript";
+      execution = await executeSandbox(this.env, { language, files: result.execution.files, command: result.execution.argv, timeout_ms: result.execution.timeout_ms }, crypto.randomUUID());
     }
+
+    const githubResults: any[] = [];
+    let approvalPending: any = null;
+    const githubOperations = Array.isArray(result.github_operations) ? result.github_operations.slice(0, 8) as GithubOperation[] : [];
+    if (githubOperations.length) {
+      if (!this.env.GITHUB_APP_TOKEN) throw new Error("GitHub tools are not configured. Add GITHUB_APP_TOKEN to the Cloudflare Worker.");
+      const permissions = await this.db("agent_tool_permissions?user_id=eq." + encodeURIComponent(userId) + "&tool_name=eq.github&enabled=eq.true&select=config");
+      const config = Array.isArray(permissions) ? permissions[0]?.config : null;
+      const configuredRepos = Array.isArray(config?.repositories) ? config.repositories.filter((value: unknown) => typeof value === "string") : [];
+      const globalRepos = (this.env.GITHUB_ALLOWED_REPOSITORIES || this.env.GITHUB_SANDBOX_REPOSITORY || "").split(",").map(value => value.trim()).filter(Boolean);
+      const allowedRepositories = configuredRepos.filter((value: string) => !globalRepos.length || globalRepos.includes(value));
+      if (!allowedRepositories.length) throw new Error("Enable GitHub tools and add at least one allowed repository in the Agent workspace settings.");
+      for (const operation of githubOperations) {
+        const writeAction = ["create_branch", "upsert_file", "create_pull_request", "merge_pull_request"].includes(operation.action);
+        if (writeAction) {
+          const actionHash = await sha256Hex(JSON.stringify(operation));
+          const approved = await this.db("agent_approvals?run_id=eq." + encodeURIComponent(run.id) + "&task_id=eq." + encodeURIComponent(task.id) + "&user_id=eq." + encodeURIComponent(userId) + "&action_type=eq.github_write&action_hash=eq." + actionHash + "&status=eq.approved&consumed_at=is.null&select=id");
+          let approval = Array.isArray(approved) ? approved[0] : null;
+          if (!approval) {
+            const pending = await this.db("agent_approvals?run_id=eq." + encodeURIComponent(run.id) + "&task_id=eq." + encodeURIComponent(task.id) + "&user_id=eq." + encodeURIComponent(userId) + "&action_type=eq.github_write&action_hash=eq." + actionHash + "&status=eq.pending&select=id");
+            approval = Array.isArray(pending) ? pending[0] : null;
+            if (!approval) {
+              const created = await this.db("agent_approvals", "POST", { run_id: run.id, task_id: task.id, user_id: userId, action_type: "github_write", description: "Approve GitHub " + operation.action + " on " + operation.repository, payload: operation, action_hash: actionHash, requested_by: "agent", expires_at: new Date(Date.now() + 24 * 60 * 60_000).toISOString() });
+              approval = Array.isArray(created) ? created[0] : null;
+            }
+            if (!approval?.id) throw new Error("Could not create a GitHub approval request.");
+            approvalPending = { approval_id: approval.id, action: operation.action, repository: operation.repository };
+            break;
+          }
+          const consumed = await this.db("agent_approvals?id=eq." + encodeURIComponent(approval.id) + "&user_id=eq." + encodeURIComponent(userId) + "&status=eq.approved&consumed_at=is.null", "PATCH", { consumed_at: new Date().toISOString() });
+          if (!Array.isArray(consumed) || !consumed.length) throw new Error("GitHub approval was already consumed or expired.");
+        }
+        const operationResult = await executeGithubOperation(this.env, operation, allowedRepositories);
+        githubResults.push({ action: operation.action, repository: operation.repository, result: operationResult });
+      }
+    }
+    if (approvalPending) return { result: { deliverable: result.deliverable, criterion_evidence: result.criterion_evidence, limitations, execution, github_results: githubResults, approval_pending: approvalPending, model_review_passed: false }, artifacts, duration: Date.now() - started, passed: false, approval_pending: true };
     const evidenceByCriterion = new Map(result.criterion_evidence.map((item: any) => [item.criterion, item]));
     const evidenceCorpus = [result.deliverable, ...artifacts.map((artifact: any) => artifact.content)].join("\n");
     const allCriteriaAccountedFor = task.acceptance_criteria.every(c => evidenceByCriterion.has(c));
@@ -117,10 +158,11 @@ b(`model_metrics?${filter}`);
       return item?.status === "met" && typeof item?.evidence === "string" &&
         item.evidence.trim().length >= 12 && evidenceCorpus.includes(item.evidence.trim());
     });
-    const allMet = modelEvidenceMet && (task.task_type !== "coding" || execution?.passed === true);
+    const githubVerificationPassed = githubResults.every(item => item.action !== "verify_commit" || item.result?.passed === true);
+    const allMet = modelEvidenceMet && (task.task_type !== "coding" || execution?.passed === true) && githubVerificationPassed;
     if (task.task_type === "coding" && execution && !execution.passed) limitations.push(`Sandbox command failed (exit ${execution.exit_code}): ${execution.stderr.slice(0, 1200)}`);
     return {
-      result: { deliverable: result.deliverable, criterion_evidence: result.criterion_evidence, limitations, model_review_passed: modelEvidenceMet, execution, external_execution: task.task_type === "coding" ? "cloudflare-container" : "not_required" },
+      result: { deliverable: result.deliverable, criterion_evidence: result.criterion_evidence, limitations, model_review_passed: modelEvidenceMet, execution, github_results: githubResults, external_execution: task.task_type === "coding" ? "github-actions-isolated-runner" : "not_required" },
       artifacts, duration: Date.now() - started, passed: allMet
     };
   }
@@ -216,6 +258,12 @@ b(`model_metrics?${filter}`);
           });
           await this.event(runId, userId, "task_started", `Started: ${task.title}`, { task_id: task.id, attempt, provider: model.provider, model: model.model_id });
           const result = await this.completeTask(task, run, userId, model, attempt, lastFailure);
+          if (result.approval_pending) {
+            await this.db("agent_tasks?id=eq." + encodeURIComponent(task.id) + "&user_id=eq." + encodeURIComponent(userId), "PATCH", { status: "blocked", verification_status: "not_started", result: result.result, error: "Waiting for owner approval before a GitHub write operation." });
+            await this.db("agent_runs?id=eq." + encodeURIComponent(runId) + "&user_id=eq." + encodeURIComponent(userId), "PATCH", { status: "blocked", last_error: "A GitHub operation is waiting for owner approval." });
+            await this.event(runId, userId, "approval_requested", "A GitHub write operation is waiting for your approval.", result.result.approval_pending);
+            return { passed: false, result: result.result, approval_pending: true };
+          }
           await this.recordMetric(model, task.task_type || "general", result.duration, result.passed);
           await this.db("agent_steps", "POST", {
             run_id: runId, task_id: task.id, user_id: userId, attempt, step_type: attempt > 1 ? "repair" : "model",
@@ -265,6 +313,7 @@ b(`model_metrics?${filter}`);
           lastFailure = "Model execution returned no result.";
           continue;
         }
+        if ((outcome.result as any)?.approval_pending) return { status: "blocked", reason: "approval_required" };
         success = outcome.passed;
         task.status = success ? "completed" : (attempt === maxAttempts ? "failed" : "ready");
         if (!success) {
