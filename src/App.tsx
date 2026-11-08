@@ -263,7 +263,7 @@ function AgentWorkspace({ session, onSignIn }: { session: Session | null; onSign
       {pendingApprovals.length > 0 && <div className="agent-plan-card">
         <div className="agent-eyebrow">OWNER APPROVALS</div><h2>Actions waiting for approval</h2>
         {pendingApprovals.map(item => <article className="agent-task" key={item.id}>
-          <div><strong>{item.description}</strong><p>{item.action_type.replaceAll("_", " ")} · {new Date(item.created_at).toLocaleString()}</p></div>
+          <div><strong>{item.description}</strong><p>{item.action_type.replaceAll("_", " ")} · {new Date(item.created_at).toLocaleString()}</p><details className="agent-approval-details"><summary>Review exact operation payload</summary><pre className="agent-approval-payload">{JSON.stringify(item.payload, null, 2)}</pre></details></div>
           <div className="agent-run-controls">
             <button className="agent-plan-button" disabled={!!approvalBusy} onClick={() => void decideApproval(item.id, "approved")}>{approvalBusy === item.id ? "Saving…" : "Approve"}</button>
             <button className="agent-danger-button" disabled={!!approvalBusy} onClick={() => void decideApproval(item.id, "rejected")}>Reject</button>
