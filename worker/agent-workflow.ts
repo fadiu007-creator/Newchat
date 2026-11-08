@@ -106,7 +106,7 @@ export class AgentWorkflow extends WorkflowEntrypoint<Env, Params> {
     else await this.db("model_metrics", "POST", values);
   }
 
-  private async completeTask(task: Task, run: any, userId: string, model: Model, attempt: number) {
+  private async completeTask(task: Task, run: any, userId: string, model: Model, attempt: number, previousFailure = "") {
     const started = Date.now();
     const endpoint = model.provider === "openrouter"
       ? "https://openrouter.ai/api/v1/chat/completions"
@@ -122,7 +122,8 @@ export class AgentWorkflow extends WorkflowEntrypoint<Env, Params> {
       `Task: ${task.title}`,
       `Description: ${task.description}`,
       `Acceptance criteria: ${JSON.stringify(task.acceptance_criteria)}`,
-      `Attempt: ${attempt} of ${run.max_attempts}`
+      `Attempt: ${attempt} of ${run.max_attempts}`,
+      `Previous attempt feedback to repair: ${previousFailure || "No previous attempt."}`
     ].join("\n\n");
     const response = await fetch(endpoint, {
       method: "POST",
@@ -252,10 +253,10 @@ export class AgentWorkflow extends WorkflowEntrypoint<Env, Params> {
             verification_status: "running", error: null
           });
           await this.event(runId, userId, "task_started", `Started: ${task.title}`, { task_id: task.id, attempt, provider: model.provider, model: model.model_id });
-          const result = await this.completeTask(task, run, userId, model, attempt);
+          const result = await this.completeTask(task, run, userId, model, attempt, lastFailure);
           await this.recordMetric(model, task.task_type || "general", result.duration, result.passed);
           await this.db("agent_steps", "POST", {
-            run_id: runId, task_id: task.id, user_id: userId, attempt, step_type: "model",
+            run_id: runId, task_id: task.id, user_id: userId, attempt, step_type: attempt > 1 ? "repair" : "model",
             provider: model.provider, model: model.model_id, input_summary: task.title,
             output_summary: result.result.deliverable.slice(0, 3000), status: "completed",
             duration_ms: result.duration, cost_usd: 0, metadata: { free_route: true }
@@ -304,7 +305,11 @@ export class AgentWorkflow extends WorkflowEntrypoint<Env, Params> {
         }
         success = outcome.passed;
         task.status = success ? "completed" : (attempt === maxAttempts ? "failed" : "ready");
-        if (!success) lastFailure = "Acceptance criteria were not evidenced.";
+        if (!success) {
+          const evidence = Array.isArray(outcome.result?.criterion_evidence) ? JSON.stringify(outcome.result.criterion_evidence).slice(0, 2400) : "No criterion evidence returned.";
+          const limits = Array.isArray(outcome.result?.limitations) ? JSON.stringify(outcome.result.limitations).slice(0, 1000) : "";
+          lastFailure = `Acceptance verification failed. Previous evidence: ${evidence}. Limitations: ${limits}`;
+        }
       }
       if (!success) {
         await this.event(runId, userId, "task_failed", `Task failed after bounded attempts: ${task.title}`, { task_id: task.id, error: lastFailure });
