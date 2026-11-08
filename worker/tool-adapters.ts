@@ -111,8 +111,8 @@ async function getGitHubToken(env: ToolEnv) {
 
 async function githubApi(env: ToolEnv, repo: string, path: string, method = "GET", body?: unknown) {
   if (!SAFE_REPO.test(repo) || repo.includes("..")) throw new Error("Invalid GitHub repository identifier.");
-  const allowed = (env.GITHUB_ALLOWED_REPOSITORIES || env.GITHUB_SANDBOX_REPOSITORY || "fadiu007-creator/Newchat").split(",").map(x => x.trim()).filter(Boolean);
-  if (!allowed.includes(repo)) throw new Error("This repository is not in the configured GitHub allowlist.");
+  const allowed = (env.GITHUB_ALLOWED_REPOSITORIES || "").split(",").map(x => x.trim()).filter(Boolean);
+  if (allowed.length && !allowed.includes(repo)) throw new Error("This repository is not in the configured GitHub allowlist.");
   if (!path.startsWith("/") || path.includes("..") || path.includes("://") || path.length > 500) throw new Error("Invalid GitHub API path.");
   const token = await getGitHubToken(env);
   const response = await fetch("https://api.github.com/repos/" + repo + path, {
@@ -151,7 +151,7 @@ export async function executeSandbox(env: ToolEnv, input: SandboxRequest, reques
 
   const runsUrl = `https://api.github.com/repos/${repo}/actions/workflows/agent-sandbox.yml/runs?event=workflow_dispatch&branch=main&per_page=30`;
   let run: any = null;
-  const deadline = Date.now() + 210_000;
+  const deadline = Date.now() + 150_000;
   while (Date.now() < deadline) {
     const response = await fetch(runsUrl, { headers: { Authorization: "Bearer " + token, Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" } });
     if (!response.ok) throw new Error(`Could not inspect sandbox workflow runs (HTTP ${response.status}).`);
@@ -162,9 +162,9 @@ export async function executeSandbox(env: ToolEnv, input: SandboxRequest, reques
       item.display_title?.includes(requestId)
     ) || run;
     if (run?.status === "completed") break;
-    await sleep(2000);
+    await sleep(5000);
   }
-  if (!run || run.status !== "completed") throw new Error("GitHub Actions sandbox did not finish within 210 seconds.");
+  if (!run || run.status !== "completed") throw new Error("GitHub Actions sandbox did not finish within 150 seconds.");
 
   const checksResponse = await fetch(`https://api.github.com/repos/${repo}/commits/${run.head_sha}/check-runs?filter=all&per_page=100`, {
     headers: { Authorization: "Bearer " + token, Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" }
