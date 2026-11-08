@@ -1,6 +1,7 @@
 name = "newchat"
 main = "worker/index.ts"
 compatibility_date = "2026-11-08"
+compatibility_flags = ["nodejs_compat"]
 
 [assets]
 directory = "./dist"
@@ -10,8 +11,15 @@ run_worker_first = ["/api/*"]
 
 [vars]
 ALLOWED_ORIGIN = "https://newchat.shqiptare.workers.dev"
+GITHUB_SANDBOX_REPOSITORY = "fadiu007-creator/Newchat"
 SUPABASE_URL = "https://saavqlbwffrwxingbnri.supabase.co"
 SUPABASE_ANON_KEY = "sb_publishable_IruAYNoelmN7N4Q1Hy2HFg_wxw-1zgS"
 
 [secrets]
 required = ["OPENROUTER_API_KEY"]
+
+[[workflows]]
+name = "newchat-agent"
+binding = "AGENT_WORKFLOW"
+class_name = "AgentWorkflow"
+

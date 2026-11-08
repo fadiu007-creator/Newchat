@@ -10,6 +10,11 @@ import {
 type Provider = "openrouter" | "edenai";
 type Message = { id: string; role: "user" | "assistant"; content: string };
 type Conversation = { id: string; title: string; model: string; provider: Provider; messages: Message[] };
+type AgentTask = { id?: string; task_key: string; position: number; title: string; description: string; acceptance_criteria: string[]; dependencies: string[]; status: string; verification_status?: string; result?: any };
+type AgentArtifact = { id: string; name: string; mime_type: string; content_text?: string | null; created_at: string };
+type AgentEvent = { id: string; event_type: string; message: string; created_at: string };
+type AgentApproval = { id: string; run_id?: string | null; action_type: string; description: string; payload?: any; created_at: string; expires_at?: string | null };
+type AgentPlan = { run_id: string; status: string; summary: string; success_criteria: string[]; tasks: AgentTask[]; planner?: { provider: string; model: string; cost_policy?: string }; next?: string };
 
 const modelOptions = [
   { provider: "openrouter" as const, model: "openrouter/free", label: "Auto · Free models", maker: "OpenRouter", free: true },
@@ -51,6 +56,248 @@ const newConversation = (): Conversation => ({
   provider: "openrouter", messages: []
 });
 
+
+function AgentWorkspace({ session, onSignIn }: { session: Session | null; onSignIn: () => void }) {
+  const [goal, setGoal] = useState("");
+  const [strategy, setStrategy] = useState<"balanced" | "best_quality" | "free_first">("balanced");
+  const [budget, setBudget] = useState("0");
+  const [planning, setPlanning] = useState(false);
+  const [plan, setPlan] = useState<AgentPlan | null>(null);
+  const [error, setError] = useState("");
+  const [busyAction, setBusyAction] = useState("");
+  const [artifacts, setArtifacts] = useState<AgentArtifact[]>([]);
+  const [events, setEvents] = useState<AgentEvent[]>([]);
+  const [executionReady, setExecutionReady] = useState<boolean | null>(null);
+  const [githubReady, setGithubReady] = useState(false);
+  const [githubRepo, setGithubRepo] = useState("fadiu007-creator/Newchat");
+  const [githubEnabled, setGithubEnabled] = useState(false);
+  const [githubNotice, setGithubNotice] = useState("");
+  const [pendingApprovals, setPendingApprovals] = useState<AgentApproval[]>([]);
+  const [approvalBusy, setApprovalBusy] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    void fetch("/api/health").then(response => response.json()).then((data: { capabilities?: { agentExecution?: boolean; githubOperations?: boolean } }) => {
+      if (active) { setExecutionReady(data.capabilities?.agentExecution === true); setGithubReady(data.capabilities?.githubOperations === true); }
+    }).catch(() => { if (active) setExecutionReady(false); });
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    if (!supabase || !session) return;
+    let active = true;
+    void supabase.from("agent_runs")
+      .select("id,summary,status,success_criteria,agent_tasks(id,task_key,position,title,description,acceptance_criteria,dependencies,status)")
+      .order("created_at", { ascending: false }).limit(1).maybeSingle()
+      .then(({ data }) => {
+        if (!active || !data) return;
+        const savedTasks = Array.isArray(data.agent_tasks) ? data.agent_tasks as AgentTask[] : [];
+        setPlan({
+          run_id: data.id, status: data.status, summary: data.summary,
+          success_criteria: Array.isArray(data.success_criteria) ? data.success_criteria as string[] : [],
+          tasks: savedTasks.sort((x, y) => x.position - y.position),
+          planner: { provider: "openrouter", model: "Plan saved from previous session" }
+        });
+      });
+    return () => { active = false; };
+  }, [session?.user.id]);
+
+
+  useEffect(() => {
+    if (!supabase || !session) { setPendingApprovals([]); return; }
+    let active = true;
+    void Promise.all([
+      supabase.from("agent_tool_permissions").select("id,enabled,config").eq("user_id", session.user.id).eq("tool_name", "github").maybeSingle(),
+      supabase.from("agent_approvals").select("id,run_id,action_type,description,payload,created_at,expires_at").eq("user_id", session.user.id).eq("status", "pending").order("created_at", { ascending: false }).limit(20)
+    ]).then(([permissionResult, approvalsResult]) => {
+      if (!active) return;
+      const permission = permissionResult.data;
+      if (permission) {
+        setGithubEnabled(permission.enabled === true);
+        const repos = Array.isArray(permission.config?.repositories) ? permission.config.repositories : [];
+        if (repos.length) setGithubRepo(repos.join(", "));
+      } else {
+        setGithubEnabled(false);
+      }
+      setPendingApprovals((approvalsResult.data || []) as AgentApproval[]);
+    });
+    return () => { active = false; };
+  }, [session?.user.id]);
+
+  async function saveGithubPermission() {
+    if (!supabase || !session) { onSignIn(); return; }
+    const repositories = githubRepo.split(",").map(value => value.trim()).filter(Boolean);
+    if (!repositories.length || repositories.some(value => !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(value))) {
+      setGithubNotice("Enter one or more valid owner/repository names.");
+      return;
+    }
+    setGithubNotice("");
+    const existing = await supabase.from("agent_tool_permissions").select("id").eq("user_id", session.user.id).eq("tool_name", "github").maybeSingle();
+    const values = { enabled: githubEnabled, approval_required: true, config: { repositories } };
+    const result = existing.data
+      ? await supabase.from("agent_tool_permissions").update(values).eq("id", existing.data.id)
+      : await supabase.from("agent_tool_permissions").insert({ user_id: session.user.id, tool_name: "github", ...values });
+    if (result.error) setGithubNotice("Could not save GitHub permissions: " + result.error.message);
+    else setGithubNotice("GitHub permissions saved. All repository writes still require your approval.");
+  }
+
+  async function decideApproval(approvalId: string, decision: "approved" | "rejected") {
+    if (!session || approvalBusy) return;
+    setApprovalBusy(approvalId);
+    try {
+      const response = await fetch("/api/agent/approval/decision", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: "Bearer " + session.access_token },
+        body: JSON.stringify({ approval_id: approvalId, decision })
+      });
+      const data = await response.json().catch(() => ({})) as { error?: string };
+      if (!response.ok) throw new Error(data.error || "Could not save the approval decision.");
+      setPendingApprovals(items => items.filter(item => item.id !== approvalId));
+      if (plan?.run_id) await refreshRun(plan.run_id);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Approval decision failed.");
+    } finally { setApprovalBusy(""); }
+  }
+
+  async function refreshRun(runId: string) {
+    if (!supabase || !session) return;
+    const [runResult, taskResult, eventResult, artifactResult, approvalResult] = await Promise.all([
+      supabase.from("agent_runs").select("id,status,summary,success_criteria").eq("id", runId).maybeSingle(),
+      supabase.from("agent_tasks").select("id,task_key,position,title,description,acceptance_criteria,dependencies,status,verification_status,result").eq("run_id", runId).order("position"),
+      supabase.from("agent_events").select("id,event_type,message,created_at").eq("run_id", runId).order("created_at", { ascending: false }).limit(30),
+      supabase.from("agent_artifacts").select("id,name,mime_type,content_text,created_at").eq("run_id", runId).order("created_at", { ascending: false }).limit(30),
+      supabase.from("agent_approvals").select("id,run_id,action_type,description,payload,created_at,expires_at").eq("run_id", runId).eq("status", "pending").order("created_at", { ascending: false }).limit(20)
+    ]);
+    const runData = runResult.data;
+    if (runData) setPlan(previous => previous && previous.run_id === runId ? {
+      ...previous, status: runData.status, summary: runData.summary,
+      success_criteria: runData.success_criteria || [],
+      tasks: taskResult.data || previous.tasks
+    } : previous);
+    if (eventResult.data) setEvents(eventResult.data as AgentEvent[]);
+    if (artifactResult.data) setArtifacts(artifactResult.data as AgentArtifact[]);
+    if (approvalResult.data) setPendingApprovals(approvalResult.data as AgentApproval[]);
+  }
+
+  async function runAction(action: "start" | "pause" | "resume" | "cancel") {
+    if (!session || !plan || busyAction) return;
+    setBusyAction(action); setError("");
+    try {
+      const response = await fetch(action === "start" ? "/api/agent/start" : "/api/agent/control", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: "Bearer " + session.access_token },
+        body: JSON.stringify(action === "start" ? { run_id: plan.run_id } : { run_id: plan.run_id, action })
+      });
+      const data = await response.json().catch(() => ({})) as { error?: string; status?: string };
+      if (!response.ok) throw new Error(data.error || `Agent action failed (HTTP ${response.status}).`);
+      await refreshRun(plan.run_id);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Agent action failed.");
+    } finally { setBusyAction(""); }
+  }
+
+  useEffect(() => {
+    if (!plan?.run_id || !session) return;
+    void refreshRun(plan.run_id);
+    if (!["queued", "running"].includes(plan.status)) return;
+    const timer = window.setInterval(() => { void refreshRun(plan.run_id); }, 4000);
+    return () => window.clearInterval(timer);
+  }, [plan?.run_id, plan?.status, session?.user.id]);
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    if (!session) { onSignIn(); return; }
+    if (goal.trim().length < 3 || planning) return;
+    const spend = Number(budget);
+    if (!Number.isFinite(spend) || spend < 0 || spend > 1000) { setError("Enter a budget between $0 and $1,000."); return; }
+    setPlanning(true); setError(""); setPlan(null);
+    try {
+      const response = await fetch("/api/agent/plan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: "Bearer " + session.access_token },
+        body: JSON.stringify({ goal: goal.trim(), strategy, max_budget_usd: spend, max_runtime_minutes: 30, max_attempts: 3 })
+      });
+      const data = await response.json().catch(() => ({})) as AgentPlan & { error?: string };
+      if (!response.ok) throw new Error(data.error || "Planning failed (HTTP " + response.status + ").");
+      setPlan(data);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not create the plan.");
+    } finally { setPlanning(false); }
+  }
+
+  return (
+    <section className="agent-workspace">
+      <div className="agent-hero">
+        <div className="welcome-icon"><Sparkles size={23}/></div>
+        <div className="agent-eyebrow">GOAL-BASED WORKSPACE</div>
+        <h1>What do you want<br/><span>to accomplish?</span></h1>
+        <p>Describe the outcome. Newchat will break it into verifiable tasks and prepare an execution plan.</p>
+      </div>
+      <form className="agent-goal-form" onSubmit={submit}>
+        <textarea value={goal} onChange={e => setGoal(e.target.value)} placeholder="Example: Build and deploy a complete invoicing app with user accounts, a database, tests and a production deployment…" rows={4} maxLength={12000}/>
+        <div className="agent-settings-row">
+          <label>Model strategy<select value={strategy} onChange={e => setStrategy(e.target.value as typeof strategy)}>
+            <option value="balanced">Balanced · cost and quality</option>
+            <option value="free_first">Free models first</option>
+            <option value="best_quality">Best quality · rank free models</option>
+          </select></label>
+          <label>Maximum spend (USD)<input type="number" min="0" max="1000" step="0.50" value={budget} onChange={e => setBudget(e.target.value)}/></label>
+        </div>
+        <p className="agent-strategy-note">The strategy is saved with this run. Agent execution uses free models; paid chat models require a separate approval and are capped at $1 in rolling 24-hour spend.</p>
+        <div className="agent-form-footer">
+          <span><Check size={14}/> No manual model selection · free planning route</span>
+          <button type="submit" className="agent-plan-button" disabled={planning || goal.trim().length < 3}>
+            {planning ? "Creating plan…" : <><Sparkles size={16}/> Create plan <ArrowUp size={16}/></>}
+          </button>
+        </div>
+      </form>
+      <div className="agent-plan-card github-tools-panel">
+        <div className="agent-plan-header"><div><span className="agent-eyebrow">REPOSITORY ACCESS</span><h2>GitHub tools</h2></div><span className="agent-status">{githubReady ? "Connected" : "Needs setup"}</span></div>
+        <p>Choose the repositories the agent may inspect or modify. Every write, branch creation, pull request and merge requires your approval.</p>
+        <label className="github-repo-field">Allowed repositories<input value={githubRepo} onChange={event => setGithubRepo(event.target.value)} placeholder="owner/repository, owner/another-repository" /></label>
+        <label className="github-enable-row"><input type="checkbox" checked={githubEnabled} onChange={event => setGithubEnabled(event.target.checked)} /> Enable GitHub tools for this account</label>
+        <button className="agent-secondary-button" onClick={() => void saveGithubPermission()}>Save GitHub permissions</button>
+        {githubNotice && <p className="agent-strategy-note">{githubNotice}</p>}
+        {!githubReady && <p className="agent-strategy-note">Add GITHUB_APP_TOKEN as a Cloudflare Worker secret with Actions write, Checks read and repository contents/pull-request permissions.</p>}
+      </div>
+      {pendingApprovals.length > 0 && <div className="agent-plan-card">
+        <div className="agent-eyebrow">OWNER APPROVALS</div><h2>Actions waiting for approval</h2>
+        {pendingApprovals.map(item => <article className="agent-task" key={item.id}>
+          <div><strong>{item.description}</strong><p>{item.action_type.replaceAll("_", " ")} · {new Date(item.created_at).toLocaleString()}</p></div>
+          <div className="agent-run-controls">
+            <button className="agent-plan-button" disabled={!!approvalBusy} onClick={() => void decideApproval(item.id, "approved")}>{approvalBusy === item.id ? "Saving…" : "Approve"}</button>
+            <button className="agent-danger-button" disabled={!!approvalBusy} onClick={() => void decideApproval(item.id, "rejected")}>Reject</button>
+          </div>
+        </article>)}
+      </div>}
+      {error && <div className="error-notice agent-notice">{error}</div>}
+      {executionReady === false && <div className="error-notice agent-notice">Durable execution is not enabled on this Worker. Configure the SUPABASE_SERVICE_ROLE_KEY Worker secret and deploy the current Worker build before starting a run.</div>}
+      {plan && <div className="agent-plan-card">
+        <div className="agent-plan-header"><div><span className="agent-eyebrow">PLAN CREATED</span><h2>{plan.summary}</h2></div><span className="agent-status">{plan.status}</span></div>
+        <div className="agent-run-meta">Run ID: {plan.run_id} · Planner: {plan.planner?.model || "Saved plan"} · {plan.tasks.length} tasks</div>
+        <h3>Success criteria</h3>
+        <ul className="agent-criteria">{plan.success_criteria.map((criterion, i) => <li key={i}><Check size={14}/>{criterion}</li>)}</ul>
+        <h3>Execution tasks</h3>
+        <div className="agent-task-list">{plan.tasks.map(task => <article className="agent-task" key={task.task_key}>
+          <span className="agent-task-number">{task.position}</span>
+          <div><strong>{task.title}</strong><p>{task.description}</p><ul>{task.acceptance_criteria.map((criterion, i) => <li key={i}>{criterion}</li>)}</ul>{task.dependencies.length > 0 && <small>Depends on: {task.dependencies.join(", ")}</small>}</div>
+          <span className="agent-task-state">{task.status}</span>
+        </article>)}</div>
+        <div className="agent-run-controls">
+          {plan.status === "planned" && <button className="agent-plan-button" onClick={() => void runAction("start")} disabled={!!busyAction || executionReady === false}>{busyAction === "start" ? "Starting…" : executionReady === false ? "Execution not configured" : "Start execution"}</button>}
+          {(plan.status === "paused" || plan.status === "blocked") && <button className="agent-plan-button" onClick={() => void runAction(plan.status === "blocked" ? "start" : "resume")} disabled={!!busyAction}>{busyAction === "resume" || busyAction === "start" ? "Resuming…" : "Resume"}</button>}
+          {["queued", "running"].includes(plan.status) && <button className="agent-secondary-button" onClick={() => void runAction("pause")} disabled={!!busyAction}>{busyAction === "pause" ? "Pausing…" : "Pause"}</button>}
+          {["queued", "running", "paused"].includes(plan.status) && <button className="agent-danger-button" onClick={() => void runAction("cancel")} disabled={!!busyAction}>{busyAction === "cancel" ? "Stopping…" : "Stop"}</button>}
+          <span className="agent-status">{plan.status}</span>
+        </div>
+        {artifacts.length > 0 && <div className="agent-output-section"><h3>Deliverables ({artifacts.length})</h3>{artifacts.map(file => <details className="agent-artifact" key={file.id}><summary>{file.name} <small>{file.mime_type}</small></summary><pre>{file.content_text || "Stored artifact."}</pre></details>)}</div>}
+        {events.length > 0 && <div className="agent-output-section"><h3>Execution activity</h3><ol className="agent-event-list">{events.map(item => <li key={item.id}><strong>{item.event_type.replaceAll("_", " ")}</strong><span>{item.message}</span><time>{new Date(item.created_at).toLocaleString()}</time></li>)}</ol></div>}
+        <div className="agent-execution-note"><strong>Execution and verification are evidence-based.</strong><span>{githubReady ? "Coding tasks run in isolated GitHub Actions containers with network disabled. " : "Coding sandbox and repository actions need GitHub App credentials before they can run. "}GitHub repository writes require owner approval. Commit and check-run verification is independent of model-generated claims. Deployment verification is reported separately from code execution.</span></div>
+      </div>}
+    </section>
+  );
+}
+
 export default function App() {
   const [conversations, setConversations] = useState<Conversation[]>([newConversation()]);
   const [activeId, setActiveId] = useState(conversations[0].id);
@@ -67,6 +314,7 @@ export default function App() {
   const [authBusy, setAuthBusy] = useState(false);
   const [authError, setAuthError] = useState("");
   const [historyLoaded, setHistoryLoaded] = useState(false);
+  const [workspaceMode, setWorkspaceMode] = useState<"agent" | "chat">("agent");
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const active = conversations.find(c => c.id === activeId) ?? conversations[0];
@@ -235,17 +483,36 @@ export default function App() {
     setLoading(true);
     setNotice("");
     try {
-      const response = await fetch("/api/chat", {
+      const chatPayload = {
+        provider: active.provider,
+        model: active.model,
+        max_tokens: 1024,
+        messages: history.map(({ role, content }) => ({ role, content }))
+      };
+      let response = await fetch("/api/chat", {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
-        body: JSON.stringify({
-          provider: active.provider,
-          model: active.model,
-          max_tokens: 1024,
-          messages: history.map(({ role, content }) => ({ role, content }))
-        })
+        headers: { "Content-Type": "application/json", Authorization: "Bearer " + session.access_token },
+        body: JSON.stringify(chatPayload)
       });
-      const data = await response.json().catch(() => ({})) as { error?: string; content?: string };
+      let data = await response.json().catch(() => ({})) as { error?: string; content?: string; approval_required?: boolean; approval_id?: string; estimated_cost_usd?: number; daily_budget_usd?: number };
+      if (response.status === 402 && data.approval_required && data.approval_id) {
+        const estimate = Number(data.estimated_cost_usd || 0);
+        const accepted = window.confirm("This model is paid. Estimated cost: $" + estimate.toFixed(6) + ". Rolling 24-hour paid-model cap: $" + Number(data.daily_budget_usd || 1).toFixed(2) + ". Approve this one request?");
+        const decisionResponse = await fetch("/api/agent/approval/decision", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: "Bearer " + session.access_token },
+          body: JSON.stringify({ approval_id: data.approval_id, decision: accepted ? "approved" : "rejected" })
+        });
+        const decisionData = await decisionResponse.json().catch(() => ({})) as { error?: string };
+        if (!decisionResponse.ok) throw new Error(decisionData.error || "Could not save paid-model approval.");
+        if (!accepted) throw new Error("Paid-model request was not approved.");
+        response = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: "Bearer " + session.access_token },
+          body: JSON.stringify({ ...chatPayload, approval_id: data.approval_id })
+        });
+        data = await response.json().catch(() => ({})) as typeof data;
+      }
       if (!response.ok) throw new Error(data.error || `The model request failed (HTTP ${response.status}).`);
       const assistantMessage: Message = {
         id: createId(), role: "assistant", content: data.content || "The provider returned an empty response."
@@ -287,7 +554,8 @@ export default function App() {
         <button className="new-chat-button" onClick={createConversation}><SquarePen size={16}/> New chat <span>⌘ K</span></button>
         <button className={`nav-item ${searchOpen ? "active" : ""}`} onClick={() => { setSearchOpen(v => !v); setSearchTerm(""); }}><Search size={16}/> Search chats</button>{searchOpen && <input className="history-search" autoFocus placeholder="Search conversations…" value={searchTerm} onChange={e => setSearchTerm(e.target.value)}/>}
         <div className="sidebar-label">WORKSPACE</div>
-        <button className="nav-item active"><MessageSquarePlus size={16}/> Chats</button>
+        <button className={"nav-item " + (workspaceMode === "agent" ? "active" : "")} onClick={() => setWorkspaceMode("agent")}><Sparkles size={16}/> Agent workspace</button>
+        <button className={"nav-item " + (workspaceMode === "chat" ? "active" : "")} onClick={() => setWorkspaceMode("chat")}><MessageSquarePlus size={16}/> Chats</button>
         <button className="nav-item"><Globe2 size={16}/> Explore models <span className="soon">Soon</span></button>
         <div className="history-heading"><span className="sidebar-label">RECENT</span><MoreHorizontal size={16}/></div>
         <div className="history-list">
@@ -304,7 +572,7 @@ export default function App() {
         <header className="topbar">
           <div className="topbar-left">
             {!sidebarOpen && <button className="icon-button" onClick={() => setSidebarOpen(true)} aria-label="Open sidebar"><Menu size={18}/></button>}
-            <div className="model-picker-wrap">
+            {workspaceMode === "chat" && <div className="model-picker-wrap">
               <button className="model-picker" onClick={() => setMenuOpen(v => !v)}>
                 <span className="model-orb"><Bot size={16}/></span>
                 <strong>{selectedModel.label}</strong><ChevronDown size={15}/>
@@ -321,11 +589,13 @@ export default function App() {
                   {m.model === active.model && m.provider === active.provider && <Check size={15}/>}
                 </button>)}
               </div>}
-            </div>
+            </div>}
+            {workspaceMode === "agent" && <div className="agent-topbar-title"><Sparkles size={16}/> Autonomous agent</div>}
           </div>
           <div className="topbar-actions"><span className="connection-pill"><span className={session ? "connected" : ""}/>{session ? "Signed in" : "Sign in to sync"}</span><button className="icon-button" aria-label="Help"><CircleHelp size={18}/></button></div>
         </header>
 
+        {workspaceMode === "agent" ? <AgentWorkspace session={session} onSignIn={() => setAuthOpen(true)}/> : (
         <section className={`chat-area ${active.messages.length ? "has-messages" : ""}`}>
           {active.messages.length === 0 ? (
             <div className="welcome">
@@ -347,8 +617,9 @@ export default function App() {
             </div>
           )}
         </section>
+        )}
 
-        <div className="composer-wrap">
+        {workspaceMode === "chat" && <div className="composer-wrap">
           {notice && <div className="error-notice"><span>{notice}</span><button onClick={() => setNotice("")} aria-label="Dismiss"><X size={14}/></button></div>}
           <form className="composer" onSubmit={onSubmit}>
             <textarea value={prompt} onChange={e => setPrompt(e.target.value)} onKeyDown={onKeyDown} placeholder="Message Newchat..." rows={2} />
@@ -358,7 +629,7 @@ export default function App() {
             </div>
           </form>
           <div className="disclaimer">Newchat can make mistakes. Verify important information.</div>
-        </div>
+        </div>}
       </main>
       {authOpen && <div className="auth-backdrop" role="presentation" onMouseDown={e => { if (e.target === e.currentTarget) setAuthOpen(false); }}>
         <section className="auth-card" role="dialog" aria-modal="true" aria-labelledby="auth-title">

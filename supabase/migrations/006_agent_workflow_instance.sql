@@ -1,0 +1,1 @@
+-- Persist the Cloudflare Workflow instance ID so runs can be controlled and resumed.\nalter table public.agent_runs add column if not exists workflow_instance_id text;\n

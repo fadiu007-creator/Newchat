@@ -4,10 +4,10 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+    branches: [main, feature/autonomous-agent-foundation]
 
 jobs:
-  build:
+  build-and-safety-tests:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -15,9 +15,10 @@ jobs:
         with:
           node-version: 22
       - run: npm install
+      - run: npm run test:safety
       - run: npm run build
       - name: Validate Cloudflare Worker bundle
         env:
-          # Placeholder is used only for the CI dry-run; production uses the encrypted Cloudflare Worker secret.
           OPENROUTER_API_KEY: ci-dry-run-placeholder
+          SUPABASE_SERVICE_ROLE_KEY: ci-dry-run-placeholder
         run: npx wrangler deploy --dry-run
