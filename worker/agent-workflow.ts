@@ -26,6 +26,16 @@ type Model = {
 };
 type Metric = { provider: string; model_id: string; quality_score: number | null; avg_latency_ms: number | null };
 
+function canonicalJson(value: unknown): string {
+  const normalize = (input: any): any => {
+    if (Array.isArray(input)) return input.map(normalize);
+    if (input && typeof input === "object") {
+      return Object.fromEntries(Object.keys(input).sort().map(key => [key, normalize(input[key])]));
+    }
+    return input;
+  };
+  return JSON.stringify(normalize(value));
+}
 export class AgentWorkflow extends WorkflowEntrypoint<Env, Params> {
   private async db(path: string, method = "GET", body?: unknown) {
     if (!this.env.SUPABASE_URL || !this.env.SUPABASE_SERVICE_ROLE_KEY) throw new Error("Agent execution database credentials are not configured.");
@@ -138,7 +148,7 @@ export class AgentWorkflow extends WorkflowEntrypoint<Env, Params> {
       for (const operation of githubOperations) {
         const writeAction = ["create_branch", "upsert_file", "create_pull_request", "merge_pull_request"].includes(operation.action);
         if (writeAction) {
-          const actionHash = await sha256Hex(JSON.stringify(operation));
+          const actionHash = await sha256Hex(canonicalJson(operation));
           const approved = await this.db("agent_approvals?run_id=eq." + encodeURIComponent(run.id) + "&task_id=eq." + encodeURIComponent(task.id) + "&user_id=eq." + encodeURIComponent(userId) + "&action_type=eq.github_write&action_hash=eq." + actionHash + "&status=eq.approved&consumed_at=is.null&select=id");
           let approval = Array.isArray(approved) ? approved[0] : null;
           if (!approval) {
