@@ -36,3 +36,4 @@ if (!root) throw new Error("Newchat root element was not found.");
 ReactDOM.createRoot(root).render(
   <React.StrictMode><AppErrorBoundary><App /></AppErrorBoundary></React.StrictMode>
 );
+(window as Window & { __newchatMarkStarted?: () => void }).__newchatMarkStarted?.();
