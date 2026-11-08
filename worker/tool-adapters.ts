@@ -1,5 +1,8 @@
 export type ToolEnv = {
   GITHUB_APP_TOKEN?: string;
+  GITHUB_APP_ID?: string;
+  GITHUB_APP_PRIVATE_KEY?: string;
+  GITHUB_APP_INSTALLATION_ID?: string;
   GITHUB_SANDBOX_REPOSITORY?: string;
   GITHUB_ALLOWED_REPOSITORIES?: string;
 };
@@ -72,25 +75,53 @@ function fromBase64(value: string) {
   return new TextDecoder().decode(bytes);
 }
 
+let cachedInstallationToken: { token: string; expiresAt: number } | null = null;
+
+function base64Url(bytes: Uint8Array) {
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(binary).replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
+}
+
+async function getGitHubToken(env: ToolEnv) {
+  if (env.GITHUB_APP_TOKEN) return env.GITHUB_APP_TOKEN;
+  if (!env.GITHUB_APP_ID || !env.GITHUB_APP_PRIVATE_KEY || !env.GITHUB_APP_INSTALLATION_ID) {
+    throw new Error("GitHub App credentials are not configured. Set GITHUB_APP_ID, GITHUB_APP_PRIVATE_KEY and GITHUB_APP_INSTALLATION_ID.");
+  }
+  if (cachedInstallationToken && cachedInstallationToken.expiresAt > Date.now() + 60_000) return cachedInstallationToken.token;
+  const now = Math.floor(Date.now() / 1000);
+  const header = base64Url(new TextEncoder().encode(JSON.stringify({ alg: "RS256", typ: "JWT" })));
+  const payload = base64Url(new TextEncoder().encode(JSON.stringify({ iat: now - 30, exp: now + 540, iss: env.GITHUB_APP_ID })));
+  const unsigned = header + "." + payload;
+  const pem = env.GITHUB_APP_PRIVATE_KEY.replace(/\\n/g, "\n").replace(/-----BEGIN PRIVATE KEY-----|-----END PRIVATE KEY-----|\s/g, "");
+  const der = Uint8Array.from(atob(pem), char => char.charCodeAt(0));
+  const key = await crypto.subtle.importKey("pkcs8", der, { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, false, ["sign"]);
+  const signature = new Uint8Array(await crypto.subtle.sign("RSASSA-PKCS1-v1_5", key, new TextEncoder().encode(unsigned)));
+  const jwt = unsigned + "." + base64Url(signature);
+  const response = await fetch("https://api.github.com/app/installations/" + encodeURIComponent(env.GITHUB_APP_INSTALLATION_ID) + "/access_tokens", {
+    method: "POST",
+    headers: { Authorization: "Bearer " + jwt, Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28", "Content-Type": "application/json" },
+    body: JSON.stringify({ permissions: { actions: "write", checks: "read", contents: "write", pull_requests: "write" } })
+  });
+  const result = await response.json() as any;
+  if (!response.ok || typeof result.token !== "string") throw new Error("Could not mint a GitHub App installation token. Check the app permissions and installation.");
+  cachedInstallationToken = { token: result.token, expiresAt: Date.parse(result.expires_at) || Date.now() + 50 * 60_000 };
+  return result.token as string;
+}
+
 async function githubApi(env: ToolEnv, repo: string, path: string, method = "GET", body?: unknown) {
-  if (!env.GITHUB_APP_TOKEN) throw new Error("GitHub integration is not configured. Add GITHUB_APP_TOKEN as a Cloudflare Worker secret.");
   if (!SAFE_REPO.test(repo) || repo.includes("..")) throw new Error("Invalid GitHub repository identifier.");
-  const allowed = (env.GITHUB_ALLOWED_REPOSITORIES || env.GITHUB_SANDBOX_REPOSITORY || "fadiu007-creator/Newchat")
-    .split(",").map(x => x.trim()).filter(Boolean);
+  const allowed = (env.GITHUB_ALLOWED_REPOSITORIES || env.GITHUB_SANDBOX_REPOSITORY || "fadiu007-creator/Newchat").split(",").map(x => x.trim()).filter(Boolean);
   if (!allowed.includes(repo)) throw new Error("This repository is not in the configured GitHub allowlist.");
   if (!path.startsWith("/") || path.includes("..") || path.includes("://") || path.length > 500) throw new Error("Invalid GitHub API path.");
-  const response = await fetch(`https://api.github.com/repos/${repo}${path}`, {
+  const token = await getGitHubToken(env);
+  const response = await fetch("https://api.github.com/repos/" + repo + path, {
     method,
-    headers: {
-      Authorization: `Bearer ${env.GITHUB_APP_TOKEN}`,
-      Accept: "application/vnd.github+json",
-      "X-GitHub-Api-Version": "2022-11-28",
-      "Content-Type": "application/json"
-    },
+    headers: { Authorization: "Bearer " + token, Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28", "Content-Type": "application/json" },
     ...(body === undefined ? {} : { body: JSON.stringify(body) })
   });
   const raw = await response.text();
-  if (!response.ok) throw new Error(`GitHub API request failed (HTTP ${response.status}): ${raw.slice(0, 500)}`);
+  if (!response.ok) throw new Error("GitHub API request failed (HTTP " + response.status + "): " + raw.slice(0, 500));
   return raw ? JSON.parse(raw) as any : null;
 }
 
@@ -98,7 +129,7 @@ export async function executeSandbox(env: ToolEnv, input: SandboxRequest, reques
   const errors = validateSandboxRequest(input);
   if (errors.length) throw new Error(errors.join(" "));
   const repo = env.GITHUB_SANDBOX_REPOSITORY || "fadiu007-creator/Newchat";
-  if (!env.GITHUB_APP_TOKEN) throw new Error("Sandbox runner requires GITHUB_APP_TOKEN with Actions write and Checks read access.");
+  const token = await getGitHubToken(env);
   if (!SAFE_REPO.test(repo)) throw new Error("Invalid configured sandbox repository.");
   const request = { ...input, timeout_ms: input.timeout_ms ?? 60_000 };
   const payload = toBase64(JSON.stringify(request));
@@ -106,7 +137,7 @@ export async function executeSandbox(env: ToolEnv, input: SandboxRequest, reques
   const dispatch = await fetch(`https://api.github.com/repos/${repo}/actions/workflows/agent-sandbox.yml/dispatches`, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${env.GITHUB_APP_TOKEN}`,
+      Authorization: "Bearer " + token,
       Accept: "application/vnd.github+json",
       "X-GitHub-Api-Version": "2022-11-28",
       "Content-Type": "application/json"
@@ -122,7 +153,7 @@ export async function executeSandbox(env: ToolEnv, input: SandboxRequest, reques
   let run: any = null;
   const deadline = Date.now() + 210_000;
   while (Date.now() < deadline) {
-    const response = await fetch(runsUrl, { headers: { Authorization: `Bearer ${env.GITHUB_APP_TOKEN}`, Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" } });
+    const response = await fetch(runsUrl, { headers: { Authorization: "Bearer " + token, Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" } });
     if (!response.ok) throw new Error(`Could not inspect sandbox workflow runs (HTTP ${response.status}).`);
     const data = await response.json() as any;
     run = (data.workflow_runs || []).find((item: any) =>
