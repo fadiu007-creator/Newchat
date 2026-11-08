@@ -164,7 +164,10 @@ async function decideAgentApproval(request: Request, env: Env, origin: string) {
         metadata: { approval_id: id }
       });
     } catch (error) {
-      return json({ error: error instanceof Error ? error.message : "Could not resume the approved agent run." }, 502, origin);
+      await supabaseRequest(env, auth.token, "agent_approvals?id=eq." + encodeURIComponent(id) + "&user_id=eq." + encodeURIComponent(auth.userId) + "&status=eq.approved", "PATCH", {
+        status: "pending", decided_at: null, decision_note: "Workflow restart failed; approval is available again."
+      });
+      return json({ error: error instanceof Error ? error.message : "Could not resume the approved agent run. The approval was reset so it can be retried." }, 502, origin);
     }
   }
   return json({ approval_id: id, status: body.decision }, 200, origin);
