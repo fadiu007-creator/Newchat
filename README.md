@@ -14,9 +14,13 @@ A unified AI chat workspace for OpenRouter and OpenAI, with a provider adapter a
 npm install
 cp .env.example .env
 npm run dev
+# In a second terminal, run the API worker:
+npm run dev:worker
 ```
 
-The chat UI runs locally. Provider requests are made through the Worker API; never put provider API keys in browser variables.
+The Vite UI runs on port 5173 and proxies /api requests to the Wrangler Worker on port 8787. Provider requests are made through the Worker API; never put provider API keys in browser variables.
+
+Deploy with `npm run deploy` after setting Worker secrets.
 
 ## Worker secrets
 Set these with Wrangler or the Cloudflare dashboard:
