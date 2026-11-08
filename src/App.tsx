@@ -10,7 +10,9 @@ import {
 type Provider = "openrouter" | "edenai";
 type Message = { id: string; role: "user" | "assistant"; content: string };
 type Conversation = { id: string; title: string; model: string; provider: Provider; messages: Message[] };
-type AgentTask = { id?: string; task_key: string; position: number; title: string; description: string; acceptance_criteria: string[]; dependencies: string[]; status: string; verification_status?: string; result?: any };\ntype AgentArtifact = { id: string; name: string; mime_type: string; content_text?: string | null; created_at: string };\ntype AgentEvent = { id: string; event_type: string; message: string; created_at: string };
+type AgentTask = { id?: string; task_key: string; position: number; title: string; description: string; acceptance_criteria: string[]; dependencies: string[]; status: string; verification_status?: string; result?: any };
+type AgentArtifact = { id: string; name: string; mime_type: string; content_text?: string | null; created_at: string };
+type AgentEvent = { id: string; event_type: string; message: string; created_at: string };
 type AgentPlan = { run_id: string; status: string; summary: string; success_criteria: string[]; tasks: AgentTask[]; planner?: { provider: string; model: string; cost_policy?: string }; next?: string };
 
 const modelOptions = [
@@ -60,7 +62,10 @@ function AgentWorkspace({ session, onSignIn }: { session: Session | null; onSign
   const [budget, setBudget] = useState("0");
   const [planning, setPlanning] = useState(false);
   const [plan, setPlan] = useState<AgentPlan | null>(null);
-  const [error, setError] = useState("");\n  const [busyAction, setBusyAction] = useState("");\n  const [artifacts, setArtifacts] = useState<AgentArtifact[]>([]);\n  const [events, setEvents] = useState<AgentEvent[]>([]);
+  const [error, setError] = useState("");
+  const [busyAction, setBusyAction] = useState("");
+  const [artifacts, setArtifacts] = useState<AgentArtifact[]>([]);
+  const [events, setEvents] = useState<AgentEvent[]>([]);
 
   useEffect(() => {
     if (!supabase || !session) return;
