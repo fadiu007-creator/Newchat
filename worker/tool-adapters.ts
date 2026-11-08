@@ -56,7 +56,7 @@ export function validateSandboxRequest(input: SandboxRequest): string[] {
     errors.push("Command must be a bounded argument array without shell chaining.");
   }
   if (input.language === "python" && input.command?.[0] !== "python3") errors.push("Python jobs must use python3.");
-  if (input.language !== "python" && input.command?.[0] !== "node") errors.push("JavaScript and TypeScript jobs must use node.");
+  if (input.language !== "python" && !["node", "npm"].includes(input.command?.[0] || "")) errors.push("JavaScript and TypeScript jobs must use node or npm.");
   const timeout = input?.timeout_ms ?? 60_000;
   if (!Number.isInteger(timeout) || timeout < 1_000 || timeout > 180_000) errors.push("Sandbox timeout must be 1–180 seconds.");
   return errors;
