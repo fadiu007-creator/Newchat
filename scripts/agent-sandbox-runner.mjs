@@ -38,7 +38,7 @@ try {
   if (!Array.isArray(job.command) || job.command.length < 1 || job.command.length > 12 || job.command.some(x => typeof x !== "string" || !x || x.length > 240 || /[\x00-\x1f;&|\x60]/.test(x))) throw new Error("Invalid argument-vector command.");
   const command = job.command;
   if (job.language === "python" && command[0] !== "python3") throw new Error("Python jobs must use python3.");
-  if (job.language !== "python" && command[0] !== "node") throw new Error("JavaScript and TypeScript jobs must use node.");
+  if (job.language !== "python" && !["node", "npm"].includes(command[0])) throw new Error("JavaScript and TypeScript jobs must use node or npm.");
   const timeout = Number(job.timeout_ms ?? 60000);
   if (!Number.isInteger(timeout) || timeout < 1000 || timeout > 180000) throw new Error("Timeout must be between 1 and 180 seconds.");
 
