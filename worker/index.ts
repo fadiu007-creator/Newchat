@@ -1,7 +1,7 @@
 export interface Env {
   ASSETS: Fetcher;
   OPENROUTER_API_KEY?: string;
-  OPENAI_API_KEY?: string;
+  OPENAI_API_KEY?: string;\n  SUPABASE_URL?: string;\n  SUPABASE_ANON_KEY?: string;
   ALLOWED_ORIGIN?: string;
 }
 
@@ -49,6 +49,20 @@ export default {
       typeof m.content === "string" && m.content.length <= 30000
     );
     if (!validMessages) return json({ error: "Invalid message format." }, 400, origin);
+
+    const bearer = request.headers.get("Authorization") || "";
+    const accessToken = bearer.startsWith("Bearer ") ? bearer.slice(7) : "";
+    if (!accessToken || !env.SUPABASE_URL || !env.SUPABASE_ANON_KEY) {
+      return json({ error: "Authentication is required. Configure Supabase and sign in." }, 401, origin);
+    }
+    try {
+      const authResponse = await fetch(`${env.SUPABASE_URL.replace(/\\/$/, "")}/auth/v1/user`, {
+        headers: { "apikey": env.SUPABASE_ANON_KEY, "Authorization": `Bearer ${accessToken}` }
+      });
+      if (!authResponse.ok) return json({ error: "Your session is invalid or expired. Please sign in again." }, 401, origin);
+    } catch {
+      return json({ error: "Unable to verify your session. Please try again." }, 502, origin);
+    }
 
     const isOpenAI = body.provider === "openai";
     const apiKey = isOpenAI ? env.OPENAI_API_KEY : env.OPENROUTER_API_KEY;
