@@ -32,7 +32,7 @@ Use the existing Zikos project. Do not create a second Supabase project for Newc
 - Worker runtime variables: `SUPABASE_URL`, `SUPABASE_ANON_KEY`
 - Worker secret: `SUPABASE_SERVICE_ROLE_KEY`
 
-The existing Zikos database already has the Newchat agent tables, owner-scoped RLS policies, generic approvals, spend ledger and atomic reservation routine. Migration `014_agent_paid_model_approval_reservation.sql` adds the atomic approval-consumption and spend-reservation function used by paid chat. It has been applied to the connected Zikos project.
+The existing Zikos database already has the Newchat agent tables, owner-scoped RLS policies, generic approvals, spend ledger and atomic reservation routine. Migrations `014_agent_paid_model_approval_reservation.sql`, `015_agent_chat_spend_without_run_id.sql` and `016_agent_paid_model_hard_budget_cap.sql` add atomic approval consumption, direct-chat spend reservations and a database-enforced $1.00 rolling 24-hour hard cap. They have been applied to the connected Zikos project.
 
 For a fresh database, apply the numbered migrations in order after verifying the current schema and the existing shared-project migrations. Enable Supabase email/password authentication.
 
@@ -96,7 +96,7 @@ Commit verification retrieves the commit, combined status and Check Runs directl
 
 ## Paid-model approvals and spend limits
 
-Free models continue without paid spend. Paid OpenRouter models require an explicit confirmation for each request. Before forwarding a paid request, the Worker:
+Agent execution currently stays on free model routes. In normal chat, free models continue without paid spend. Paid OpenRouter models require an explicit confirmation for each request. Before forwarding a paid request, the Worker:
 
 1. Retrieves current per-token model pricing from OpenRouter.
 2. Estimates the request cost using the prompt size and output-token ceiling.
