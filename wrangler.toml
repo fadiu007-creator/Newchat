@@ -14,4 +14,9 @@ SUPABASE_URL = "https://saavqlbwffrwxingbnri.supabase.co"
 SUPABASE_ANON_KEY = "sb_publishable_IruAYNoelmN7N4Q1Hy2HFg_wxw-1zgS"
 
 [secrets]
-required = ["OPENROUTER_API_KEY"]
+required = ["OPENROUTER_API_KEY", "SUPABASE_SERVICE_ROLE_KEY"]
+
+[[workflows]]
+name = "newchat-agent"
+binding = "AGENT_WORKFLOW"
+class_name = "AgentWorkflow"
