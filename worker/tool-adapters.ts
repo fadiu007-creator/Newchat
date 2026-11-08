@@ -167,7 +167,7 @@ export async function executeSandbox(env: ToolEnv, input: SandboxRequest, reques
   if (!run || run.status !== "completed") throw new Error("GitHub Actions sandbox did not finish within 210 seconds.");
 
   const checksResponse = await fetch(`https://api.github.com/repos/${repo}/commits/${run.head_sha}/check-runs?filter=all&per_page=100`, {
-    headers: { Authorization: `Bearer ${env.GITHUB_APP_TOKEN}`, Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" }
+    headers: { Authorization: "Bearer " + token, Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" }
   });
   if (!checksResponse.ok) throw new Error(`Could not retrieve independent sandbox check receipt (HTTP ${checksResponse.status}).`);
   const checks = await checksResponse.json() as any;
