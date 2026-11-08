@@ -1,5 +1,18 @@
+import { AgentWorkflow } from "./agent-workflow";
+export { AgentWorkflow };
+
 export interface Env {
   ASSETS: Fetcher;
+  SUPABASE_SERVICE_ROLE_KEY?: string;
+  AGENT_WORKFLOW: {
+    create(options: { id: string; params: { runId: string; userId: string } }): Promise<{ id: string }>;
+    get(id: string): Promise<{
+      status(): Promise<unknown>;
+      pause(): Promise<void>;
+      resume(): Promise<void>;
+      terminate(): Promise<void>;
+    }>;
+  };
   OPENROUTER_API_KEY?: string;
   EDENAI_API_KEY?: string;
   SUPABASE_URL?: string;
@@ -307,7 +320,10 @@ export default {
         openrouter: Boolean(env.OPENROUTER_API_KEY), edenai: Boolean(env.EDENAI_API_KEY)
       }
     }, 200, origin);
-    if (url.pathname === "/api/agent/plan" && request.method === "POST") return createAgentPlan(request, env, origin);\n    if (url.pathname === "/api/agent/start" && request.method === "POST") return startAgentExecution(request, env, origin);\n    if (url.pathname === "/api/agent/control" && request.method === "POST") return controlAgentExecution(request, env, origin);\n    if (url.pathname === "/api/agent/status" && request.method === "GET") return getAgentExecutionStatus(request, env, origin);
+    if (url.pathname === "/api/agent/plan" && request.method === "POST") return createAgentPlan(request, env, origin);
+    if (url.pathname === "/api/agent/start" && request.method === "POST") return startAgentExecution(request, env, origin);
+    if (url.pathname === "/api/agent/control" && request.method === "POST") return controlAgentExecution(request, env, origin);
+    if (url.pathname === "/api/agent/status" && request.method === "GET") return getAgentExecutionStatus(request, env, origin);\n    if (url.pathname === "/api/agent/start" && request.method === "POST") return startAgentExecution(request, env, origin);\n    if (url.pathname === "/api/agent/control" && request.method === "POST") return controlAgentExecution(request, env, origin);\n    if (url.pathname === "/api/agent/status" && request.method === "GET") return getAgentExecutionStatus(request, env, origin);
     if (url.pathname !== "/api/chat" || request.method !== "POST") return json({ error: "Not found" }, 404, origin);
 
     let body: ChatRequest;
