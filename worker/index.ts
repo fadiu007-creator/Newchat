@@ -1,7 +1,6 @@
 export interface Env {
   ASSETS: Fetcher;
   OPENROUTER_API_KEY?: string;
-  OPENAI_API_KEY?: string;
   EDENAI_API_KEY?: string;
   SUPABASE_URL?: string;
   SUPABASE_ANON_KEY?: string;
@@ -9,7 +8,7 @@ export interface Env {
 }
 
 type ChatMessage = { role: "system" | "user" | "assistant"; content: string };
-type ChatRequest = { provider: "openrouter" | "openai" | "edenai"; model: string; messages: ChatMessage[] };
+type ChatRequest = { provider: "openrouter" | "edenai"; model: string; messages: ChatMessage[] };
 
 const json = (data: unknown, status = 200, origin = "*") =>
   new Response(JSON.stringify(data), {
@@ -42,14 +41,13 @@ export default {
     try { body = await request.json() as ChatRequest; }
     catch { return json({ error: "Invalid JSON body." }, 400, origin); }
 
-    if (!body || !["openrouter", "openai", "edenai"].includes(body.provider) ||
+    if (!body || !["openrouter", "edenai"].includes(body.provider) ||
         typeof body.model !== "string" || body.model.length > 160 ||
         !Array.isArray(body.messages) || body.messages.length === 0 || body.messages.length > 80) {
       return json({ error: "Invalid chat request." }, 400, origin);
     }
     const allowedModels = {
       openrouter: ["openai/gpt-4.1", "anthropic/claude-sonnet-4", "google/gemini-2.5-pro", "deepseek/deepseek-r1", "x-ai/grok-3"],
-      openai: ["gpt-4.1", "o3"],
       edenai: ["openai/gpt-4o", "anthropic/claude-sonnet-4-5", "deepseek/deepseek-r1", "google/gemini-2.5-pro"]
     }[body.provider];
     if (!allowedModels.includes(body.model)) {
@@ -76,7 +74,6 @@ export default {
     }
 
     const providerConfig = {
-      openai: { key: env.OPENAI_API_KEY, name: "OpenAI", endpoint: "https://api.openai.com/v1/chat/completions" },
       openrouter: { key: env.OPENROUTER_API_KEY, name: "OpenRouter", endpoint: "https://openrouter.ai/api/v1/chat/completions" },
       edenai: { key: env.EDENAI_API_KEY, name: "Eden AI", endpoint: "https://api.edenai.run/v3/chat/completions" }
     }[body.provider];
