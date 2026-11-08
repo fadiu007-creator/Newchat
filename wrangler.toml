@@ -1,6 +1,7 @@
 name = "newchat"
 main = "worker/index.ts"
 compatibility_date = "2026-11-08"
+compatibility_flags = ["nodejs_compat"]
 
 [assets]
 directory = "./dist"
@@ -20,3 +21,20 @@ required = ["OPENROUTER_API_KEY"]
 name = "newchat-agent"
 binding = "AGENT_WORKFLOW"
 class_name = "AgentWorkflow"
+
+[[containers]]
+class_name = "AgentSandbox"
+scheduling_policy = "durable_object"
+instance_type = "lite"
+max_instances = 10
+
+[[durable_objects.bindings]]
+name = "AGENT_SANDBOX"
+class_name = "AgentSandbox"
+
+[containers.images.workspace]
+dockerfile = "./Dockerfile"
+
+[exports.AgentSandbox]
+type = "durable-object"
+storage = "sqlite"
