@@ -11,6 +11,9 @@ export interface Env {
   OPENROUTER_API_KEY?: string;
   EDENAI_API_KEY?: string;
   GITHUB_APP_TOKEN?: string;
+  GITHUB_APP_ID?: string;
+  GITHUB_APP_PRIVATE_KEY?: string;
+  GITHUB_APP_INSTALLATION_ID?: string;
   GITHUB_SANDBOX_REPOSITORY?: string;
   GITHUB_ALLOWED_REPOSITORIES?: string;
   SUPABASE_URL?: string;
@@ -398,10 +401,10 @@ export default {
     if (!url.pathname.startsWith("/api/")) return env.ASSETS.fetch(request);
     if (url.pathname === "/api/health") return json({
       ok: true, service: "newchat-api",
-      capabilities: { chat: true, agentPlanning: true, agentExecution: Boolean(env.SUPABASE_SERVICE_ROLE_KEY && env.AGENT_WORKFLOW), sandboxExecution: Boolean(env.GITHUB_APP_TOKEN), githubOperations: Boolean(env.GITHUB_APP_TOKEN), independentGithubVerification: Boolean(env.GITHUB_APP_TOKEN), paidModelApproval: Boolean(env.SUPABASE_SERVICE_ROLE_KEY) },
+      capabilities: { chat: true, agentPlanning: true, agentExecution: Boolean(env.SUPABASE_SERVICE_ROLE_KEY && env.AGENT_WORKFLOW), sandboxExecution: Boolean(env.GITHUB_APP_TOKEN || (env.GITHUB_APP_ID && env.GITHUB_APP_PRIVATE_KEY && env.GITHUB_APP_INSTALLATION_ID)), githubOperations: Boolean(env.GITHUB_APP_TOKEN || (env.GITHUB_APP_ID && env.GITHUB_APP_PRIVATE_KEY && env.GITHUB_APP_INSTALLATION_ID)), independentGithubVerification: Boolean(env.GITHUB_APP_TOKEN || (env.GITHUB_APP_ID && env.GITHUB_APP_PRIVATE_KEY && env.GITHUB_APP_INSTALLATION_ID)), paidModelApproval: Boolean(env.SUPABASE_SERVICE_ROLE_KEY) },
       build_sha: env.APP_COMMIT_SHA || "unversioned",
       configuration: {
-        github: Boolean(env.GITHUB_APP_TOKEN),
+        github: Boolean(env.GITHUB_APP_TOKEN || (env.GITHUB_APP_ID && env.GITHUB_APP_PRIVATE_KEY && env.GITHUB_APP_INSTALLATION_ID)),
         supabase: Boolean(env.SUPABASE_URL && env.SUPABASE_ANON_KEY),
         openrouter: Boolean(env.OPENROUTER_API_KEY), edenai: Boolean(env.EDENAI_API_KEY)
       }
