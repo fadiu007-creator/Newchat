@@ -23,12 +23,18 @@ Vite runs on port 5173 and proxies `/api` requests to Wrangler on port 8787. Pro
 
 ## Supabase setup
 1. Use the existing Zikos Supabase project (do not create another project for this app).
-2. Set the project URL in `VITE_SUPABASE_URL` and the publishable/anon key in `VITE_SUPABASE_ANON_KEY` for the frontend build.
+2. In Cloudflare's Pages/Workers build environment settings, set `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` as build-time variables (the URL and publishable/anon key are public client configuration, not provider secrets). The frontend reads these at Vite build time; runtime Worker secrets with different names do not populate them.
 3. Apply `supabase/migrations/001_conversations.sql` and then `002_add_edenai_provider.sql` only when setting up a fresh database. The Newchat migrations have already been applied to the shared Zikos project.
 4. Enable Email authentication in Supabase. Newchat currently uses email/password sign-in; Google OAuth is intentionally disabled.
 5. Set Cloudflare Worker secrets `SUPABASE_URL` and `SUPABASE_ANON_KEY` to the same project URL and publishable/anon key so the API can verify signed-in sessions.
 
-## Cloudflare Worker secrets
+## Cloudflare configuration
+
+**Build-time variables** (Cloudflare build settings; required for the frontend sign-in UI):
+- `VITE_SUPABASE_URL`
+- `VITE_SUPABASE_ANON_KEY`
+
+**Worker runtime secrets** (Worker Settings → Variables and Secrets):
 - `OPENROUTER_API_KEY`
 - `OPENAI_API_KEY`
 - `EDENAI_API_KEY`
