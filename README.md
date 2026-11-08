@@ -1,84 +1,136 @@
 # Newchat
 
-A unified AI chat workspace using provider gateways, with OpenRouter and Eden AI integrations.
+A multi-provider AI chat application and goal-based autonomous agent. Newchat runs on Cloudflare Workers and the existing Zikos Supabase project. It does not require Vercel or Cloudflare Workers Paid features.
 
 ## Stack
-- React + TypeScript + Vite
-- Cloudflare Workers API
-- Supabase email/password Auth + Postgres with row-level security
-- OpenRouter multi-model gateway
-- Eden AI v3 model gateway
+
+- React, TypeScript and Vite
+- Cloudflare Workers + Cloudflare Workflows
+- Supabase Auth and Postgres with row-level security
+- OpenRouter and Eden AI model gateways
+- GitHub App integration for repository operations
+- GitHub Actions hosted runners for isolated code execution
 
 ## Local development
+
 ```bash
-npm install
+npm ci
 cp .env.example .env
 npm run dev
 # In a second terminal:
 npm run dev:worker
 ```
 
-Vite runs on port 5173 and proxies `/api` requests to Wrangler on port 8787. Provider keys must only be stored as Cloudflare Worker secrets, never in browser variables.
+Provider credentials belong only in Worker secrets. Never put provider or service-role keys in Vite variables.
 
-## Supabase setup
-1. Use the existing Zikos Supabase project (do not create another project for this app).
-2. In Cloudflare Worker build settings, set `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` as build-time variables (the URL and publishable/anon key are public client configuration, not provider secrets). The frontend reads these at Vite build time; runtime Worker secrets with different names do not populate them.
-3. Apply `supabase/migrations/001_conversations.sql` and then `002_add_edenai_provider.sql` only when setting up a fresh database. The Newchat migrations have already been applied to the shared Zikos project.
-4. Enable Email authentication in Supabase. Newchat currently uses email/password sign-in; Google OAuth is intentionally disabled.
-5. Set Cloudflare Worker secrets `SUPABASE_URL` and `SUPABASE_ANON_KEY` to the same project URL and publishable/anon key so the API can verify signed-in sessions.
+## Existing Supabase project
 
-## Cloudflare configuration
+Use the existing Zikos project. Do not create a second Supabase project for Newchat.
 
-**Build-time variables** (Cloudflare build settings; required for the frontend sign-in UI):
-- `VITE_SUPABASE_URL`
-- `VITE_SUPABASE_ANON_KEY`
+- Project URL: `https://saavqlbwffrwxingbnri.supabase.co`
+- Frontend build variables: `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`
+- Worker runtime variables: `SUPABASE_URL`, `SUPABASE_ANON_KEY`
+- Worker secret: `SUPABASE_SERVICE_ROLE_KEY`
 
-**Worker runtime secrets** (Worker Settings → Variables and Secrets):
+The existing Zikos database already has the Newchat agent tables, owner-scoped RLS policies, generic approvals, spend ledger and atomic reservation routine. Migration `014_agent_paid_model_approval_reservation.sql` adds the atomic approval-consumption and spend-reservation function used by paid chat. It has been applied to the connected Zikos project.
+
+For a fresh database, apply the numbered migrations in order after verifying the current schema and the existing shared-project migrations. Enable Supabase email/password authentication.
+
+## Cloudflare Worker configuration
+
+The Worker and SPA are served from `https://newchat.shqiptare.workers.dev`. The Workflow binding is declared in `wrangler.toml`.
+
+Required runtime secrets:
+
 - `OPENROUTER_API_KEY`
+- `SUPABASE_SERVICE_ROLE_KEY` — server-only; never expose it to the browser or a sandbox.
+- `SUPABASE_URL` and `SUPABASE_ANON_KEY` — session verification.
+
+Optional provider secret:
+
 - `EDENAI_API_KEY`
-- `SUPABASE_URL`
-- `SUPABASE_ANON_KEY`
-- `SUPABASE_SERVICE_ROLE_KEY` — required only for the server-side Cloudflare Workflow executor. Never expose this key as a Vite/build variable or in browser code.
 
-The `newchat-agent` Cloudflare Workflow binding and `AgentWorkflow` class are declared in `wrangler.toml` and `worker/agent-workflow.ts`. The Agent workspace checks `/api/health` and disables Start when the deployed Worker does not have both the Workflow binding and service-role secret.
-- `SUPABASE_SERVICE_ROLE_KEY` (server-only; required for durable agent execution)
+The app uses Cloudflare Workflows, which are available on Workers Free. The Free plan has usage limits (including daily request/step and storage limits); monitor usage in Cloudflare. Newchat does not bind Cloudflare Containers or require the Workers Paid plan.
 
-The Worker serves both the frontend and `/api/*` from `https://newchat.shqiptare.workers.dev`; keep `ALLOWED_ORIGIN` set to that exact origin. No Pages deployment is required.
+## GitHub App setup
 
-## Current status
-The repository contains the application scaffold, OpenRouter/Eden AI provider routing, Supabase email/password authentication UI, per-user conversation persistence with row-level security, and conversation search/rename/delete/Markdown export.
+The agent uses a GitHub App installation token. The Worker mints short-lived installation tokens using the App private key; it does not store a long-lived installation token.
 
-The Agent workspace includes durable Cloudflare Workflow orchestration, bounded task attempts, free-model registry refresh from OpenRouter, per-task model routing based on measured task metrics, task outputs, artifact records, event history, and pause/resume/cancel controls. Execution currently generates deliverables through AI models; it does **not** yet have connected browser automation, general web search inside the deployed Worker, sandboxed code execution, file-system tools, GitHub repository actions, or production deployment tools. It must not claim those actions were performed. Only explicitly free OpenRouter models are eligible; paid-model escalation and real paid-cost accounting are not enabled. The configured budget is stored with the run but is not a paid-spend authorization mechanism.
+Create a GitHub App and install it only on repositories you intend Newchat to access. Grant these repository permissions:
 
-Frontend Supabase build variables and Worker secrets must be configured by the project owner before hosted authentication and execution work. Google OAuth is not part of the current build.
+- Actions: Read and write (dispatch the sandbox workflow)
+- Checks: Read (retrieve independent execution receipts)
+- Contents: Read and write (inspect and edit files, create branches)
+- Pull requests: Read and write (open and merge pull requests)
 
-## Autonomous agent execution
+Set these Cloudflare Worker secrets:
 
-The Agent workspace creates a dependency-aware plan and can start it as a durable Cloudflare Workflow. Execution state, task attempts, model metrics, events and text artifacts are persisted in the existing Zikos Supabase project.
+- `GITHUB_APP_ID`
+- `GITHUB_APP_PRIVATE_KEY` — the complete PEM private key; preserve newlines or use escaped `\n`
+- `GITHUB_APP_INSTALLATION_ID`
 
-Before enabling execution, add `SUPABASE_SERVICE_ROLE_KEY` as a **Worker secret** in Cloudflare (Settings → Variables and Secrets). Do not add it as a Vite variable or commit it to the repository. The execution API deliberately returns a configuration error until this secret is present. The `newchat-agent` Workflow binding is declared in `wrangler.toml`.
+A fine-grained `GITHUB_APP_TOKEN` secret can be used as a fallback, but it expires and must be rotated manually. Prefer the App credentials above.
 
-The current runtime routes tasks through the explicitly free OpenRouter model registry and records criterion evidence and model metrics. Its verification is model-assisted content review, not an independent test runner. Browser automation, arbitrary code execution, GitHub write operations, production deployment, paid-model escalation/approval and complete tool-permission enforcement are not yet connected. The runtime must not be treated as having performed those external actions.
+The sandbox dispatch repository is configured as `GITHUB_SANDBOX_REPOSITORY` in `wrangler.toml`. In Agent workspace → GitHub tools, enable GitHub access and enter the user's repository allowlist. The installation must also have access to those repositories. Repository reads may run automatically; all repository writes, branch creation, pull requests and merges pause for explicit owner approval.
 
-## Agent execution integrations (in progress)
+## Sandboxed code execution
 
-The Worker now contains isolated adapter contracts in `worker/tool-adapters.ts` for:
-- Remote sandbox execution (HTTPS-only runner, ephemeral filesystem, network disabled, bounded source size and timeout).
-- GitHub REST operations using a server-side token (repository and API-path validation).
-- Independent GitHub commit/check-run verification.
-- Projected-spend budget calculation and consequential-action classification.
+Coding tasks are dispatched to `.github/workflows/agent-sandbox.yml` on the public Newchat repository. GitHub Actions provides the ephemeral hosted VM; the job then runs untrusted code inside a Docker container with:
 
-These are adapter primitives, **not yet an enabled end-to-end agent toolchain**. The Workflow does not yet dispatch model-generated tool calls through them, enforce per-user repository allowlists, or pause/resume on approval records. The health endpoint reports whether the optional secrets are configured; this does not certify that a provider is correctly provisioned.
+- No container network access
+- Read-only container root filesystem
+- A bounded writable workspace and temporary filesystem
+- Non-root UID, dropped Linux capabilities and no-new-privileges
+- CPU, memory, PID and wall-clock limits
+- No application secrets, GitHub token or Supabase credentials passed into the container
 
-### Optional Worker secrets
+The host preloads the repository-locked Node dependencies and mounts them read-only for offline test execution. The runner supports JavaScript, TypeScript (Node's type stripping) and Python standard-library tasks. The dispatch payload is deliberately bounded (20 files, 32 KB total source, 180-second maximum execution). It is not intended for large builds or package downloads requiring network access.
 
-Configure only after provisioning the corresponding services:
-- `SANDBOX_RUNNER_URL`: HTTPS endpoint implementing the Newchat sandbox request/receipt contract.
-- `SANDBOX_RUNNER_TOKEN`: bearer credential for that isolated runner.
-- `GITHUB_APP_TOKEN`: narrowly scoped GitHub App installation token; do not use a personal account token with broad permissions.
+The workflow publishes a GitHub Check Run with the unique request ID, exit code, stdout/stderr summary and result. The Worker retrieves that Check Run and validates its request ID and conclusion before recording success. A model statement alone is never treated as a successful execution.
 
-The sandbox runner must enforce the requested network-disabled, ephemeral-filesystem and resource-limit settings itself. The Worker validates the returned receipt but cannot independently prove that a third-party runner honored its isolation contract. GitHub deployment verification still requires a real deployment provider integration and is not represented by commit/check-run verification alone.
+## GitHub operations and independent verification
 
-### Safety tests
+The agent can request repository reads, branch creation, file updates, pull requests, merges and commit verification. Writes are stored as owner-scoped approval records with a hash of the exact proposed operation. Approval is one-use and expires; rejection stops the run. Per-user repository allowlists are enforced in the Workflow, and an optional global allowlist can be configured with `GITHUB_ALLOWED_REPOSITORIES`.
 
-Run `npm run test:safety` for adapter-contract guardrail tests. These are not end-to-end execution tests and do not replace integration tests against a real sandbox, GitHub App installation, approval lifecycle, or deployment target.
+Commit verification retrieves the commit, combined status and Check Runs directly from GitHub. A commit is not considered verified unless the commit exists, the combined status is successful, and all relevant check runs have completed successfully.
+
+## Paid-model approvals and spend limits
+
+Free models continue without paid spend. Paid OpenRouter models require an explicit confirmation for each request. Before forwarding a paid request, the Worker:
+
+1. Retrieves current per-token model pricing from OpenRouter.
+2. Estimates the request cost using the prompt size and output-token ceiling.
+3. Creates a short-lived, owner-scoped approval bound to a SHA-256 hash of the exact provider, model and messages.
+4. On approval, atomically consumes that approval and reserves estimated spend in Supabase.
+5. Enforces a rolling 24-hour paid-model cap of **$1.00** across the user's Newchat account.
+6. Settles the reservation against reported provider cost when usage metadata is returned; otherwise the conservative estimate remains recorded.
+
+Paid Eden AI models are blocked until verifiable per-request pricing and usage are available. A failed or unapproved request is never silently routed to a paid model.
+
+## Independent Cloudflare deployment verification
+
+The optional `.github/workflows/deploy-cloudflare.yml` workflow deploys the Worker and checks the live `/api/health` response against the exact Git commit SHA.
+
+To enable it, set the GitHub repository variable:
+
+- `CLOUDFLARE_DEPLOY_ENABLED=true`
+
+And add GitHub Actions secrets:
+
+- `CLOUDFLARE_API_TOKEN` with permission to deploy this Worker
+- `CLOUDFLARE_ACCOUNT_ID`
+
+If deployment is not enabled, the workflow is skipped. A green build alone is not reported as proof of a live deployment. The live health endpoint exposes `build_sha` so a verifier can detect stale deployments.
+
+## Verification
+
+Run locally:
+
+```bash
+npm ci
+npm run test:safety
+npm run build
+npx wrangler deploy --dry-run
+```
+
+CI runs the safety tests, frontend TypeScript/Vite build and Worker dry-run. The sandbox, GitHub App, paid approval and deployment paths additionally require the corresponding owner-managed secrets and an installed GitHub App. The health endpoint reports whether those integrations are configured; configuration alone is not proof of successful external execution.
