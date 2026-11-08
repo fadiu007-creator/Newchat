@@ -88,10 +88,14 @@ async function startAgentExecution(request: Request, env: Env, origin: string): 
   const found = await supabaseRequest(env, auth.token, `agent_runs?id=eq.${encodeURIComponent(runId)}&select=id,status,workflow_instance_id`, "GET");
   if (!found.ok || !Array.isArray(found.data) || !found.data[0]) return json({ error: "Agent run not found." }, 404, origin);
   const run = found.data[0] as { id: string; status: string; workflow_instance_id?: string };
-  if (run.status === "running" || run.status === "completed" || run.status === "cancelled") return json({ error: `Run cannot be started from status ${run.status}.`, status: run.status }, 409, origin);
+  if (run.status !== "planned") return json({ error: `Run can only be started from planned status (current: ${run.status}).`, status: run.status }, 409, origin);
   try {
     const instance = await env.AGENT_WORKFLOW.create({ id: run.id, params: { runId: run.id, userId: auth.userId } });
-    await supabaseRequest(env, auth.token, `agent_runs?id=eq.${encodeURIComponent(run.id)}`, "PATCH", { status: "queued", workflow_instance_id: instance.id, last_error: null });
+    const saved = await supabaseRequest(env, auth.token, `agent_runs?id=eq.${encodeURIComponent(run.id)}`, "PATCH", { status: "queued", workflow_instance_id: instance.id, last_error: null });
+    if (!saved.ok) {
+      await env.AGENT_WORKFLOW.get(instance.id).then(workflow => workflow.terminate()).catch(() => undefined);
+      return json({ error: "Workflow started but its run state could not be saved. The workflow was stopped; retry after checking the database.", detail: saved.data }, 500, origin);
+    }
     await supabaseRequest(env, auth.token, "agent_events", "POST", { run_id: run.id, user_id: auth.userId, event_type: "execution_queued", message: "Durable execution queued in Cloudflare Workflows." });
     return json({ run_id: run.id, workflow_id: instance.id, status: "queued" }, 202, origin);
   } catch (error) {
@@ -143,6 +147,15 @@ async function getAgentExecutionStatus(request: Request, env: Env, origin: strin
     try { workflow = await (await env.AGENT_WORKFLOW.get(run.workflow_instance_id)).status(); } catch { workflow = { status: "unavailable" }; }
   }
   return json({ run: result.data[0], workflow }, 200, origin);
+}
+
+function classifyTask(task: { title: string; description: string }): string {
+  const text = `${task.title} ${task.description}`.toLowerCase();
+  if (/\b(code|coding|implement|build|develop|program|api|database|schema|test|debug|deploy|software|app)\b/.test(text)) return "coding";
+  if (/\b(research|investigate|compare|sources|fact.?check|findings|market|competitor)\b/.test(text)) return "analysis";
+  if (/\b(write|draft|document|proposal|email|content|copy|article|guide|report)\b/.test(text)) return "writing";
+  if (/\b(analy[sz]e|review|evaluate|audit|strategy|plan|architecture)\b/.test(text)) return "analysis";
+  return "general";
 }
 
 function parsePlan(raw: string): { summary: string; success_criteria: string[]; tasks: Array<{ key: string; title: string; description: string; acceptance_criteria: string[]; depends_on: string[] }> } | null {
@@ -267,6 +280,7 @@ async function createAgentPlan(request: Request, env: Env, origin: string): Prom
       title: task.title, description: task.description,
       acceptance_criteria: task.acceptance_criteria, dependencies: task.depends_on,
       status: task.depends_on.length ? "pending" : "ready",
+      task_type: classifyTask(task),
       assigned_provider: "openrouter", assigned_model: "openrouter/free"
     }));
     const taskInsert = await supabaseRequest(env, auth.token, "agent_tasks", "POST", taskRows);
