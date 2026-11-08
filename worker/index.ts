@@ -465,6 +465,13 @@ export default {
       typeof m.content === "string" && m.content.length <= 30000
     );
     if (!validMessages) return json({ error: "Invalid message format." }, 400, origin);
+    const totalMessageBytes = body.messages.reduce((sum, message) => sum + new TextEncoder().encode(message.content).byteLength, 0);
+    if (totalMessageBytes > 128_000) return json({ error: "The conversation exceeds the 128 KB request limit." }, 413, origin);
+    const providerConfig = {
+      openrouter: { key: env.OPENROUTER_API_KEY, name: "OpenRouter", endpoint: "https://openrouter.ai/api/v1/chat/completions" },
+      edenai: { key: env.EDENAI_API_KEY, name: "Eden AI", endpoint: "https://api.edenai.run/v3/chat/completions" }
+    }[body.provider];
+    if (!providerConfig.key) return json({ error: providerConfig.name + " API key is not configured on the server." }, 503, origin);
 
     const auth = await authenticate(request, env);
     if (isResponse(auth)) return json(await auth.json(), auth.status, origin);
@@ -510,11 +517,7 @@ export default {
       paidReservationId = reservation.data;
     }
 
-    const providerConfig = {
-      openrouter: { key: env.OPENROUTER_API_KEY, name: "OpenRouter", endpoint: "https://openrouter.ai/api/v1/chat/completions" },
-      edenai: { key: env.EDENAI_API_KEY, name: "Eden AI", endpoint: "https://api.edenai.run/v3/chat/completions" }
-    }[body.provider];
-    if (!providerConfig.key) return json({ error: `${providerConfig.name} API key is not configured on the server.` }, 503, origin);
+
     const headers: Record<string, string> = { Authorization: `Bearer ${providerConfig.key}`, "Content-Type": "application/json" };
     if (body.provider === "openrouter") {
       headers["HTTP-Referer"] = "https://newchat.shqiptare.workers.dev";
@@ -528,6 +531,7 @@ export default {
       const result = await upstream.json() as {
         error?: { message?: string } | string;
         choices?: Array<{ message?: { content?: string | Array<{ type: string; text?: string }> } }>;
+        usage?: { prompt_tokens?: number; completion_tokens?: number; cost?: number };
       };
       if (!upstream.ok) {
         const detail = typeof result.error === "string" ? result.error : result.error?.message;
