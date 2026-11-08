@@ -244,7 +244,9 @@ export class AgentWorkflow extends WorkflowEntrypoint<Env, Params> {
         const pool = candidates.length ? candidates : sortedModels;
         const model = pool[(attempt - 1) % pool.length];
         const stepName = `task-${task.id}-attempt-${attempt}`.slice(0, 240);
-        const outcome = await step.do(stepName, { retries: { limit: 1, delay: "5 seconds", backoff: "exponential" } }, async () => {
+        let outcome: { passed: boolean; result: any } | null = null;
+        try {
+          outcome = await step.do(stepName, { retries: { limit: 1, delay: "5 seconds", backoff: "exponential" } }, async () => {
           await this.db(`agent_tasks?id=eq.${encodeURIComponent(task.id)}&user_id=eq.${encodeURIComponent(userId)}`, "PATCH", {
             status: "running", attempts: attempt, assigned_provider: model.provider, assigned_model: model.model_id,
             verification_status: "running", error: null
@@ -275,7 +277,31 @@ export class AgentWorkflow extends WorkflowEntrypoint<Env, Params> {
             result.passed ? `Completed: ${task.title}` : `Acceptance criteria not satisfied: ${task.title}`,
             { task_id: task.id, attempt, artifacts: result.artifacts.length, limitations: result.result.limitations });
           return { passed: result.passed, result: result.result };
-        });
+          });
+        } catch (error) {
+          lastFailure = error instanceof Error ? error.message : "Model execution failed.";
+          await this.recordMetric(model, task.task_type || "general", 0, false).catch(() => undefined);
+          await this.db(`agent_tasks?id=eq.${encodeURIComponent(task.id)}&user_id=eq.${encodeURIComponent(userId)}`, "PATCH", {
+            status: attempt === maxAttempts ? "failed" : "ready",
+            verification_status: attempt === maxAttempts ? "needs_review" : "failed",
+            attempts: attempt, assigned_provider: model.provider, assigned_model: model.model_id,
+            error: lastFailure.slice(0, 1000)
+          }).catch(() => undefined);
+          await this.db("agent_steps", "POST", {
+            run_id: runId, task_id: task.id, user_id: userId, attempt, step_type: "model",
+            provider: model.provider, model: model.model_id, input_summary: task.title,
+            output_summary: lastFailure.slice(0, 1000), status: "failed",
+            duration_ms: 0, cost_usd: 0, metadata: { fallback_attempt: attempt < maxAttempts }
+          }).catch(() => undefined);
+          await this.event(runId, userId, "model_fallback", `Model failed; trying the next eligible free model for: ${task.title}`, {
+            task_id: task.id, attempt, provider: model.provider, model: model.model_id, error: lastFailure
+          }).catch(() => undefined);
+          continue;
+        }
+        if (!outcome) {
+          lastFailure = "Model execution returned no result.";
+          continue;
+        }
         success = outcome.passed;
         task.status = success ? "completed" : (attempt === maxAttempts ? "failed" : "ready");
         if (!success) lastFailure = "Acceptance criteria were not evidenced.";
