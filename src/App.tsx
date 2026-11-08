@@ -292,7 +292,7 @@ function AgentWorkspace({ session, onSignIn }: { session: Session | null; onSign
         </div>
         {artifacts.length > 0 && <div className="agent-output-section"><h3>Deliverables ({artifacts.length})</h3>{artifacts.map(file => <details className="agent-artifact" key={file.id}><summary>{file.name} <small>{file.mime_type}</small></summary><pre>{file.content_text || "Stored artifact."}</pre></details>)}</div>}
         {events.length > 0 && <div className="agent-output-section"><h3>Execution activity</h3><ol className="agent-event-list">{events.map(item => <li key={item.id}><strong>{item.event_type.replaceAll("_", " ")}</strong><span>{item.message}</span><time>{new Date(item.created_at).toLocaleString()}</time></li>)}</ol></div>}
-        <div className="agent-execution-note"><strong>Execution and verification are evidence-based.</strong><span>Coding tasks run in isolated GitHub Actions containers with network disabled. GitHub repository writes require owner approval. Commit and check-run verification is independent of model-generated claims. Deployment verification is reported separately from code execution.</span></div>
+        <div className="agent-execution-note"><strong>Execution and verification are evidence-based.</strong><span>{githubReady ? "Coding tasks run in isolated GitHub Actions containers with network disabled. " : "Coding sandbox and repository actions need GitHub App credentials before they can run. "}GitHub repository writes require owner approval. Commit and check-run verification is independent of model-generated claims. Deployment verification is reported separately from code execution.</span></div>
       </div>}
     </section>
   );
