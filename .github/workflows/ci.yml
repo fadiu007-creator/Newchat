@@ -19,5 +19,6 @@ jobs:
       - name: Validate Cloudflare Worker bundle
         env:
           # Placeholder is used only for the CI dry-run; production uses the encrypted Cloudflare Worker secret.
-          OPENROUTER_API_KEY: ci-dry-run-placeholder\n          SUPABASE_SERVICE_ROLE_KEY: ci-dry-run-placeholder
+          OPENROUTER_API_KEY: ci-dry-run-placeholder
+          SUPABASE_SERVICE_ROLE_KEY: ci-dry-run-placeholder
         run: npx wrangler deploy --dry-run
