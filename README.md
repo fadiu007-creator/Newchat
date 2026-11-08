@@ -59,3 +59,26 @@ The Agent workspace creates a dependency-aware plan and can start it as a durabl
 Before enabling execution, add `SUPABASE_SERVICE_ROLE_KEY` as a **Worker secret** in Cloudflare (Settings → Variables and Secrets). Do not add it as a Vite variable or commit it to the repository. The execution API deliberately returns a configuration error until this secret is present. The `newchat-agent` Workflow binding is declared in `wrangler.toml`.
 
 The current runtime routes tasks through the explicitly free OpenRouter model registry and records criterion evidence and model metrics. Its verification is model-assisted content review, not an independent test runner. Browser automation, arbitrary code execution, GitHub write operations, production deployment, paid-model escalation/approval and complete tool-permission enforcement are not yet connected. The runtime must not be treated as having performed those external actions.
+
+## Agent execution integrations (in progress)
+
+The Worker now contains isolated adapter contracts in `worker/tool-adapters.ts` for:
+- Remote sandbox execution (HTTPS-only runner, ephemeral filesystem, network disabled, bounded source size and timeout).
+- GitHub REST operations using a server-side token (repository and API-path validation).
+- Independent GitHub commit/check-run verification.
+- Projected-spend budget calculation and consequential-action classification.
+
+These are adapter primitives, **not yet an enabled end-to-end agent toolchain**. The Workflow does not yet dispatch model-generated tool calls through them, enforce per-user repository allowlists, or pause/resume on approval records. The health endpoint reports whether the optional secrets are configured; this does not certify that a provider is correctly provisioned.
+
+### Optional Worker secrets
+
+Configure only after provisioning the corresponding services:
+- `SANDBOX_RUNNER_URL`: HTTPS endpoint implementing the Newchat sandbox request/receipt contract.
+- `SANDBOX_RUNNER_TOKEN`: bearer credential for that isolated runner.
+- `GITHUB_APP_TOKEN`: narrowly scoped GitHub App installation token; do not use a personal account token with broad permissions.
+
+The sandbox runner must enforce the requested network-disabled, ephemeral-filesystem and resource-limit settings itself. The Worker validates the returned receipt but cannot independently prove that a third-party runner honored its isolation contract. GitHub deployment verification still requires a real deployment provider integration and is not represented by commit/check-run verification alone.
+
+### Safety tests
+
+Run `npm run test:safety` for adapter-contract guardrail tests. These are not end-to-end execution tests and do not replace integration tests against a real sandbox, GitHub App installation, approval lifecycle, or deployment target.
