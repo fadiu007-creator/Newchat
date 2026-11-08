@@ -168,7 +168,9 @@ export class AgentWorkflow extends WorkflowEntrypoint<Env, Params> {
       let lastFailure = "";
       const maxAttempts = Math.max(1, Math.min(10, Number(run.max_attempts) || 3));
       for (let attempt = Math.max(1, (task.attempts || 0) + 1); attempt <= maxAttempts && !success; attempt++) {
-        const model = sortedModels.find(m => (m.capabilities || []).includes(task.task_type || "general")) || sortedModels[0];
+        const candidates = sortedModels.filter(m => (m.capabilities || []).includes(task.task_type || "general"));
+        const pool = candidates.length ? candidates : sortedModels;
+        const model = pool[(attempt - 1) % pool.length];
         const stepName = `task-${task.id}-attempt-${attempt}`.slice(0, 240);
         const outcome = await step.do(stepName, { retries: { limit: 1, delay: "5 seconds", backoff: "exponential" } }, async () => {
           await this.db(`agent_tasks?id=eq.${encodeURIComponent(task.id)}&user_id=eq.${encodeURIComponent(userId)}`, "PATCH", {
