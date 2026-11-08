@@ -12,15 +12,29 @@ type Message = { id: string; role: "user" | "assistant"; content: string };
 type Conversation = { id: string; title: string; model: string; provider: Provider; messages: Message[] };
 
 const modelOptions = [
-  { provider: "openrouter" as const, model: "openai/gpt-4.1", label: "GPT-4.1", maker: "OpenRouter" },
-  { provider: "openrouter" as const, model: "anthropic/claude-sonnet-4", label: "Claude Sonnet", maker: "OpenRouter" },
-  { provider: "openrouter" as const, model: "google/gemini-2.5-pro", label: "Gemini 2.5 Pro", maker: "OpenRouter" },
-  { provider: "openrouter" as const, model: "deepseek/deepseek-r1", label: "DeepSeek R1", maker: "OpenRouter" },
-  { provider: "openrouter" as const, model: "x-ai/grok-3", label: "Grok 3", maker: "OpenRouter" },
-  { provider: "edenai" as const, model: "openai/gpt-4o", label: "GPT-4o", maker: "Eden AI" },
-  { provider: "edenai" as const, model: "anthropic/claude-sonnet-4-5", label: "Claude Sonnet 4.5", maker: "Eden AI" },
-  { provider: "edenai" as const, model: "deepseek/deepseek-r1", label: "DeepSeek R1", maker: "Eden AI" },
-  { provider: "edenai" as const, model: "google/gemini-2.5-pro", label: "Gemini 2.5 Pro", maker: "Eden AI" }
+  { provider: "openrouter" as const, model: "openrouter/free", label: "Auto · Free models", maker: "OpenRouter", free: true },
+  { provider: "openrouter" as const, model: "nvidia/nemotron-3-ultra-550b-a55b:free", label: "Nemotron 3 Ultra", maker: "OpenRouter", free: true },
+  { provider: "openrouter" as const, model: "nvidia/nemotron-3.5-super-vl:free", label: "Nemotron 3.5 Super VL", maker: "OpenRouter", free: true },
+  { provider: "openrouter" as const, model: "nvidia/nemotron-3.5-lightning:free", label: "Nemotron 3.5 Lightning", maker: "OpenRouter", free: true },
+  { provider: "openrouter" as const, model: "cohere/north-mini-code:free", label: "North Mini Code", maker: "OpenRouter", free: true },
+  { provider: "openrouter" as const, model: "dots-studio/dots-3-note-preview:free", label: "Dots3-Note Preview", maker: "OpenRouter", free: true },
+  { provider: "openrouter" as const, model: "recursive/flint-v1.0:free", label: "Flint", maker: "OpenRouter", free: true },
+  { provider: "openrouter" as const, model: "liquid/lfm-3-1.7b:free", label: "LFM3 1.7B", maker: "OpenRouter", free: true },
+  { provider: "edenai" as const, model: "google/gemma-4-31b-it", label: "Gemma 4 31B", maker: "Eden AI", free: true },
+  { provider: "edenai" as const, model: "google/gemma-4-26b-a4b-it", label: "Gemma 4 26B A4B", maker: "Eden AI", free: true },
+  { provider: "edenai" as const, model: "together_ai/Prism-ML/Ternary-Bonsai-27B", label: "Ternary Bonsai 27B", maker: "Eden AI", free: true },
+  { provider: "edenai" as const, model: "cloudflare/@cf/mistral/mistral-7b-instruct-v0.2-lora", label: "Mistral 7B Instruct", maker: "Eden AI", free: true },
+  { provider: "edenai" as const, model: "cloudflare/@cf/google/gemma-7b-it-lora", label: "Gemma 7B IT", maker: "Eden AI", free: true },
+  { provider: "edenai" as const, model: "cloudflare/@cf/google/gemma-2b-it-lora", label: "Gemma 2B IT", maker: "Eden AI", free: true },
+  { provider: "openrouter" as const, model: "openai/gpt-4.1", label: "GPT-4.1", maker: "OpenRouter", free: false },
+  { provider: "openrouter" as const, model: "anthropic/claude-sonnet-4", label: "Claude Sonnet", maker: "OpenRouter", free: false },
+  { provider: "openrouter" as const, model: "google/gemini-2.5-pro", label: "Gemini 2.5 Pro", maker: "OpenRouter", free: false },
+  { provider: "openrouter" as const, model: "deepseek/deepseek-r1", label: "DeepSeek R1", maker: "OpenRouter", free: false },
+  { provider: "openrouter" as const, model: "x-ai/grok-3", label: "Grok 3", maker: "OpenRouter", free: false },
+  { provider: "edenai" as const, model: "openai/gpt-4o", label: "GPT-4o", maker: "Eden AI", free: false },
+  { provider: "edenai" as const, model: "anthropic/claude-sonnet-4-5", label: "Claude Sonnet 4.5", maker: "Eden AI", free: false },
+  { provider: "edenai" as const, model: "deepseek/deepseek-r1", label: "DeepSeek R1", maker: "Eden AI", free: false },
+  { provider: "edenai" as const, model: "google/gemini-2.5-pro", label: "Gemini 2.5 Pro", maker: "Eden AI", free: false }
 ];
 
 const starterPrompts = [
@@ -33,7 +47,7 @@ const starterPrompts = [
 const createId = () => globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
 const newConversation = (): Conversation => ({
-  id: createId(), title: "New conversation", model: "openai/gpt-4.1",
+  id: createId(), title: "New conversation", model: "openrouter/free",
   provider: "openrouter", messages: []
 });
 
@@ -227,6 +241,7 @@ export default function App() {
         body: JSON.stringify({
           provider: active.provider,
           model: active.model,
+          max_tokens: 1024,
           messages: history.map(({ role, content }) => ({ role, content }))
         })
       });
@@ -295,8 +310,13 @@ export default function App() {
                 <strong>{selectedModel.label}</strong><ChevronDown size={15}/>
               </button>
               {menuOpen && <div className="model-menu">
-                <div className="model-menu-title">Choose a model</div>
-                {modelOptions.map(m => <button key={m.provider + m.model} onClick={() => chooseModel(m)} className="model-option">
+                <div className="model-menu-title">Free models · no model charge</div>
+                {modelOptions.filter(m => m.free).map(m => <button key={m.provider + m.model} onClick={() => chooseModel(m)} className="model-option">
+                  <span className="model-option-icon"><Bot size={15}/></span><span><strong>{m.label}<em className="free-tag">FREE</em></strong><small>{m.maker} · {m.model}</small></span>
+                  {m.model === active.model && m.provider === active.provider && <Check size={15}/>}
+                </button>)}
+                <div className="model-menu-title paid-model-heading">Paid models · usage charges may apply</div>
+                {modelOptions.filter(m => !m.free).map(m => <button key={m.provider + m.model} onClick={() => chooseModel(m)} className="model-option">
                   <span className="model-option-icon"><Bot size={15}/></span><span><strong>{m.label}</strong><small>{m.maker} · {m.model}</small></span>
                   {m.model === active.model && m.provider === active.provider && <Check size={15}/>}
                 </button>)}
