@@ -159,7 +159,17 @@ export class AgentWorkflow extends WorkflowEntrypoint<Env, Params> {
         githubResults.push({ action: operation.action, repository: operation.repository, result: operationResult });
       }
     }
-    if (approvalPending) return { result: { deliverable: result.deliverable, criterion_evidence: result.criterion_evidence, limitations, execution, github_results: githubResults, approval_pending: approvalPending, model_review_passed: false }, artifacts, duration: Date.now() - started, passed: false, approval_pending: true };
+    if (approvalPending) {
+      limitations.push("No GitHub write has been executed yet. The exact operation is waiting for owner approval.");
+      return {
+        result: {
+          deliverable: "Waiting for owner approval before GitHub " + approvalPending.action + " on " + approvalPending.repository + ".",
+          criterion_evidence: [], limitations, execution, github_results: githubResults,
+          approval_pending: approvalPending, model_review_passed: false
+        },
+        artifacts, duration: Date.now() - started, passed: false, approval_pending: true
+      };
+    }
     const evidenceByCriterion = new Map(result.criterion_evidence.map((item: any) => [item.criterion, item]));
     const evidenceCorpus = [result.deliverable, ...artifacts.map((artifact: any) => artifact.content)].join("\n");
     const allCriteriaAccountedFor = task.acceptance_criteria.every(c => evidenceByCriterion.has(c));
