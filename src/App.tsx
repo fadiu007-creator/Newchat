@@ -30,8 +30,10 @@ const starterPrompts = [
   { icon: "◫", title: "Analyze a document", detail: "Find insights in a file or report" }
 ];
 
+const createId = () => globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
 const newConversation = (): Conversation => ({
-  id: crypto.randomUUID(), title: "New conversation", model: "openai/gpt-4.1",
+  id: createId(), title: "New conversation", model: "openai/gpt-4.1",
   provider: "openrouter", messages: []
 });
 
@@ -58,7 +60,9 @@ export default function App() {
   const grouped = useMemo(() => conversations.filter(c => c.messages.length > 0 && c.title.toLowerCase().includes(searchTerm.toLowerCase())), [conversations, searchTerm]);
   useEffect(() => {
     if (!supabase) return;
-    void supabase.auth.getSession().then(({ data }) => setSession(data.session));
+    void supabase.auth.getSession().then(({ data }) => setSession(data.session)).catch(error => {
+      setNotice(error instanceof Error ? `Authentication startup failed: ${error.message}` : "Authentication startup failed.");
+    });
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, nextSession) => {
       setSession(nextSession);
       setHistoryLoaded(false);
@@ -198,7 +202,7 @@ export default function App() {
     if (!value || loading) return;
     if (!session) { setAuthOpen(true); setNotice("Sign in to send messages and save your chat history."); return; }
     const conversationId = active.id;
-    const userMessage: Message = { id: crypto.randomUUID(), role: "user", content: value };
+    const userMessage: Message = { id: createId(), role: "user", content: value };
     const history = [...active.messages, userMessage];
     updateConversation(conversationId, c => ({
       ...c,
@@ -221,7 +225,7 @@ export default function App() {
       const data = await response.json() as { error?: string; content?: string };
       if (!response.ok) throw new Error(data.error || "The model request failed.");
       const assistantMessage: Message = {
-        id: crypto.randomUUID(), role: "assistant", content: data.content || "The provider returned an empty response."
+        id: createId(), role: "assistant", content: data.content || "The provider returned an empty response."
       };
       updateConversation(conversationId, c => ({ ...c, messages: [...c.messages, assistantMessage] }));
     } catch (error) {
