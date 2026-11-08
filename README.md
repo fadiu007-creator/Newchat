@@ -50,7 +50,7 @@ Optional provider secret:
 
 - `EDENAI_API_KEY`
 
-The app uses Cloudflare Workflows, which are available on Workers Free. The Free plan has usage limits (including daily request/step and storage limits); monitor usage in Cloudflare. Newchat does not bind Cloudflare Containers or require the Workers Paid plan.
+The app uses Cloudflare Workflows, which are available on Workers Free. The current Free limits include 3,000 Workflow steps/day, 100,000 executions/day, 100 concurrent instances, 1 GB-month storage, 10 ms CPU per invocation and 50 external subrequests per invocation. The sandbox poller is capped at 20 checks/100 seconds to leave room for database and model calls. Monitor usage in Cloudflare; this is a bounded MVP runner, not an unlimited build farm. Newchat does not bind Cloudflare Containers or require the Workers Paid plan.
 
 ## GitHub App setup
 
