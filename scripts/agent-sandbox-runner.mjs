@@ -43,6 +43,7 @@ try {
   if (!Number.isInteger(timeout) || timeout < 1000 || timeout > 180000) throw new Error("Timeout must be between 1 and 180 seconds.");
 
   rmSync(workspace, { recursive: true, force: true });
+  process.exitCode = 0;
   mkdirSync(workspace, { recursive: true });
   for (const file of job.files) {
     const target = resolve(workspace, file.path);
@@ -61,7 +62,8 @@ try {
     "--pids-limit=128", "--read-only",
     "--tmpfs", "/tmp:rw,noexec,nosuid,size=64m",
     "--mount", "type=bind,src=" + workspace + ",dst=/workspace,rw",
-    "--workdir", "/workspace", "--user", "10001:10001",
+    ...(existsSync(resolve("node_modules")) ? ["--mount", "type=bind,src=" + resolve("node_modules") + ",dst=/workspace/node_modules,readonly"] : []),
+    "--workdir", "/workspace", "--user", "10001:10001", "--env", "HOME=/tmp", "--env", "npm_config_cache=/tmp/npm-cache",
     "--cap-drop=ALL", "--security-opt=no-new-privileges",
     image, ...command
   ];
