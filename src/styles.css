@@ -96,3 +96,21 @@ button{color:inherit;cursor:pointer}
 .error-notice{display:flex;justify-content:space-between;align-items:center;background:#382326;border:1px solid #693a40;color:#ffc2c2;padding:9px 12px;border-radius:9px;font-size:11px;margin-bottom:9px}
 .error-notice button{border:0;background:transparent;color:inherit;display:grid;place-items:center}
 @media(max-width:700px){.sidebar{position:absolute;z-index:10;height:100%;box-shadow:15px 0 40px #0006}.sidebar-hidden{position:relative}.topbar{padding:0 13px}.topbar-actions{gap:4px}.connection-pill{font-size:0;padding:8px}.connection-pill span{width:7px;height:7px}.chat-area{padding:20px 16px 10px}.composer-wrap{width:calc(100% - 26px)}.welcome{margin:auto auto 7vh}.welcome h1{font-size:33px}.starter-grid{gap:7px}.starter-card{padding:10px;min-height:88px}.starter-card small{font-size:9px}}
+
+.profile-action{border:1px solid #393a43;background:#24252b;color:#c9c4da;border-radius:7px;padding:6px 8px;font-size:10px;white-space:nowrap}
+.auth-backdrop{position:fixed;inset:0;background:#050507b8;backdrop-filter:blur(5px);display:grid;place-items:center;padding:18px;z-index:30}
+.auth-card{width:min(410px,100%);position:relative;background:#1c1d23;border:1px solid #3b3c46;border-radius:17px;padding:30px;box-shadow:0 24px 80px #0009;text-align:center}
+.auth-close{position:absolute;right:12px;top:12px;border:0;background:transparent;color:#92939c;padding:7px;display:grid;place-items:center}
+.auth-card .welcome-icon{margin:0 auto 15px}
+.auth-card h2{font:700 22px Manrope,sans-serif;margin:0;color:#f4f3f7}
+.auth-card>p{font-size:12px;color:#9697a1;margin:9px 0 22px}
+.google-button,.auth-form button{width:100%;height:42px;border:1px solid #494a55;background:#eae8f0;color:#1d1c23;border-radius:9px;font-size:12px;font-weight:700}
+.google-button:disabled,.auth-form button:disabled{opacity:.6}
+.auth-divider{display:flex;align-items:center;gap:12px;color:#777984;font-size:10px;margin:18px 0}
+.auth-divider:before,.auth-divider:after{content:"";height:1px;background:#393a43;flex:1}
+.auth-form{display:grid;gap:10px}
+.auth-form input{width:100%;height:42px;background:#14151a;border:1px solid #393a43;border-radius:8px;padding:0 12px;color:#f1f0f5;font-size:12px;outline:none}
+.auth-form input:focus{border-color:#7668a0}
+.auth-error{margin-top:12px;color:#ffb8b8;font-size:11px;line-height:1.5}
+.auth-switch{margin-top:17px;border:0;background:transparent;color:#b6a8ed;font-size:11px}
+.connection-pill .connected{background:#68c89a}
