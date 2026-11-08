@@ -172,7 +172,7 @@ export default function App() {
       `Model: ${conversation.model} (${conversation.provider})`,
       "",
       ...conversation.messages.flatMap(m => [`## ${m.role === "user" ? "You" : "Assistant"}`, m.content, ""])
-    ].join("\\n");
+    ].join("\n");
     const blob = new Blob([transcript], { type: "text/markdown;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
