@@ -19,7 +19,10 @@ const modelOptions = [
   { provider: "openrouter" as const, model: "x-ai/grok-3", label: "Grok 3", maker: "OpenRouter" },
   { provider: "openai" as const, model: "gpt-4.1", label: "GPT-4.1", maker: "Direct OpenAI" },
   { provider: "openai" as const, model: "o3", label: "o3", maker: "Direct OpenAI" },
-  { provider: "edenai" as const, model: "openai/gpt-4o", label: "GPT-4o", maker: "Eden AI" },\n  { provider: "edenai" as const, model: "anthropic/claude-sonnet-4-5", label: "Claude Sonnet 4.5", maker: "Eden AI" },\n  { provider: "edenai" as const, model: "deepseek/deepseek-r1", label: "DeepSeek R1", maker: "Eden AI" },\n  { provider: "edenai" as const, model: "google/gemini-2.5-pro", label: "Gemini 2.5 Pro", maker: "Eden AI" }
+  { provider: "edenai" as const, model: "openai/gpt-4o", label: "GPT-4o", maker: "Eden AI" },
+  { provider: "edenai" as const, model: "anthropic/claude-sonnet-4-5", label: "Claude Sonnet 4.5", maker: "Eden AI" },
+  { provider: "edenai" as const, model: "deepseek/deepseek-r1", label: "DeepSeek R1", maker: "Eden AI" },
+  { provider: "edenai" as const, model: "google/gemini-2.5-pro", label: "Gemini 2.5 Pro", maker: "Eden AI" }
 ];
 
 const starterPrompts = [
@@ -50,7 +53,8 @@ export default function App() {
   const [authBusy, setAuthBusy] = useState(false);
   const [authError, setAuthError] = useState("");
   const [historyLoaded, setHistoryLoaded] = useState(false);
-  const [searchOpen, setSearchOpen] = useState(false);\n  const [searchTerm, setSearchTerm] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchTerm, setSearchTerm] = useState("");
   const active = conversations.find(c => c.id === activeId) ?? conversations[0];
   const selectedModel = modelOptions.find(m => m.model === active.model) ?? modelOptions[0];
   const grouped = useMemo(() => conversations.filter(c => c.messages.length > 0 && c.title.toLowerCase().includes(searchTerm.toLowerCase())), [conversations, searchTerm]);
