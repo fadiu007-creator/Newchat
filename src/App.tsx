@@ -53,6 +53,79 @@ const newConversation = (): Conversation => ({
   provider: "openrouter", messages: []
 });
 
+
+function AgentWorkspace({ session, onSignIn }: { session: Session | null; onSignIn: () => void }) {
+  const [goal, setGoal] = useState("");
+  const [strategy, setStrategy] = useState<"balanced" | "best_quality" | "free_first">("balanced");
+  const [budget, setBudget] = useState("0");
+  const [planning, setPlanning] = useState(false);
+  const [plan, setPlan] = useState<AgentPlan | null>(null);
+  const [error, setError] = useState("");
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    if (!session) { onSignIn(); return; }
+    if (goal.trim().length < 3 || planning) return;
+    const spend = Number(budget);
+    if (!Number.isFinite(spend) || spend < 0 || spend > 1000) { setError("Enter a budget between $0 and $1,000."); return; }
+    setPlanning(true); setError(""); setPlan(null);
+    try {
+      const response = await fetch("/api/agent/plan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: "Bearer " + session.access_token },
+        body: JSON.stringify({ goal: goal.trim(), strategy, max_budget_usd: spend, max_runtime_minutes: 30, max_attempts: 3 })
+      });
+      const data = await response.json().catch(() => ({})) as AgentPlan & { error?: string };
+      if (!response.ok) throw new Error(data.error || "Planning failed (HTTP " + response.status + ").");
+      setPlan(data);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not create the plan.");
+    } finally { setPlanning(false); }
+  }
+
+  return (
+    <section className="agent-workspace">
+      <div className="agent-hero">
+        <div className="welcome-icon"><Sparkles size={23}/></div>
+        <div className="agent-eyebrow">GOAL-BASED EXECUTION</div>
+        <h1>What do you want<br/><span>to accomplish?</span></h1>
+        <p>Describe the outcome. Newchat will break it into verifiable tasks and prepare an execution plan.</p>
+      </div>
+      <form className="agent-goal-form" onSubmit={submit}>
+        <textarea value={goal} onChange={e => setGoal(e.target.value)} placeholder="Example: Build and deploy a complete invoicing app with user accounts, a database, tests and a production deployment…" rows={4} maxLength={12000}/>
+        <div className="agent-settings-row">
+          <label>Model strategy<select value={strategy} onChange={e => setStrategy(e.target.value as typeof strategy)}>
+            <option value="balanced">Balanced · cost and quality</option>
+            <option value="free_first">Free models first</option>
+            <option value="best_quality">Best quality · approval before paid use</option>
+          </select></label>
+          <label>Maximum spend (USD)<input type="number" min="0" max="1000" step="0.50" value={budget} onChange={e => setBudget(e.target.value)}/></label>
+        </div>
+        <div className="agent-form-footer">
+          <span><Check size={14}/> Automatic model routing · no manual model selection</span>
+          <button type="submit" className="agent-plan-button" disabled={planning || goal.trim().length < 3}>
+            {planning ? "Creating plan…" : <><Sparkles size={16}/> Create execution plan <ArrowUp size={16}/></>}
+          </button>
+        </div>
+      </form>
+      {error && <div className="error-notice agent-notice">{error}</div>}
+      {plan && <div className="agent-plan-card">
+        <div className="agent-plan-header"><div><span className="agent-eyebrow">PLAN CREATED</span><h2>{plan.summary}</h2></div><span className="agent-status">{plan.status}</span></div>
+        <div className="agent-run-meta">Run ID: {plan.run_id} · Planner: {plan.planner.model} · {plan.tasks.length} tasks</div>
+        <h3>Success criteria</h3>
+        <ul className="agent-criteria">{plan.success_criteria.map((criterion, i) => <li key={i}><Check size={14}/>{criterion}</li>)}</ul>
+        <h3>Execution tasks</h3>
+        <div className="agent-task-list">{plan.tasks.map(task => <article className="agent-task" key={task.task_key}>
+          <span className="agent-task-number">{task.position}</span>
+          <div><strong>{task.title}</strong><p>{task.description}</p><ul>{task.acceptance_criteria.map((criterion, i) => <li key={i}>{criterion}</li>)}</ul>{task.dependencies.length > 0 && <small>Depends on: {task.dependencies.join(", ")}</small>}</div>
+          <span className="agent-task-state">{task.status}</span>
+        </article>)}</div>
+        <div className="agent-execution-note"><strong>Plan saved · execution engine not enabled yet.</strong><span>This first phase stores the goal, acceptance criteria and dependency graph. Durable execution, tool permissions, verification and pause/resume are the next implementation phase.</span></div>
+      </div>}
+    </section>
+  );
+}
+
 export default function App() {
   const [conversations, setConversations] = useState<Conversation[]>([newConversation()]);
   const [activeId, setActiveId] = useState(conversations[0].id);
