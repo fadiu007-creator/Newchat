@@ -10,8 +10,8 @@ import {
 type Provider = "openrouter" | "edenai";
 type Message = { id: string; role: "user" | "assistant"; content: string };
 type Conversation = { id: string; title: string; model: string; provider: Provider; messages: Message[] };
-type AgentTask = { id: string; task_key: string; position: number; title: string; description: string; acceptance_criteria: string[]; dependencies: string[]; status: string };
-type AgentPlan = { run_id: string; status: string; summary: string; success_criteria: string[]; tasks: AgentTask[]; planner: { provider: string; model: string; cost_policy: string }; next: string };
+type AgentTask = { id?: string; task_key: string; position: number; title: string; description: string; acceptance_criteria: string[]; dependencies: string[]; status: string };
+type AgentPlan = { run_id: string; status: string; summary: string; success_criteria: string[]; tasks: AgentTask[]; planner?: { provider: string; model: string; cost_policy?: string }; next?: string };
 
 const modelOptions = [
   { provider: "openrouter" as const, model: "openrouter/free", label: "Auto · Free models", maker: "OpenRouter", free: true },
@@ -62,6 +62,25 @@ function AgentWorkspace({ session, onSignIn }: { session: Session | null; onSign
   const [plan, setPlan] = useState<AgentPlan | null>(null);
   const [error, setError] = useState("");
 
+  useEffect(() => {
+    if (!supabase || !session) return;
+    let active = true;
+    void supabase.from("agent_runs")
+      .select("id,summary,status,success_criteria,agent_tasks(id,task_key,position,title,description,acceptance_criteria,dependencies,status)")
+      .order("created_at", { ascending: false }).limit(1).maybeSingle()
+      .then(({ data }) => {
+        if (!active || !data) return;
+        const savedTasks = Array.isArray(data.agent_tasks) ? data.agent_tasks as AgentTask[] : [];
+        setPlan({
+          run_id: data.id, status: data.status, summary: data.summary,
+          success_criteria: Array.isArray(data.success_criteria) ? data.success_criteria as string[] : [],
+          tasks: savedTasks.sort((x, y) => x.position - y.position),
+          planner: { provider: "openrouter", model: "Plan saved from previous session" }
+        });
+      });
+    return () => { active = false; };
+  }, [session?.user.id]);
+
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (!session) { onSignIn(); return; }
@@ -111,7 +130,7 @@ function AgentWorkspace({ session, onSignIn }: { session: Session | null; onSign
       {error && <div className="error-notice agent-notice">{error}</div>}
       {plan && <div className="agent-plan-card">
         <div className="agent-plan-header"><div><span className="agent-eyebrow">PLAN CREATED</span><h2>{plan.summary}</h2></div><span className="agent-status">{plan.status}</span></div>
-        <div className="agent-run-meta">Run ID: {plan.run_id} · Planner: {plan.planner.model} · {plan.tasks.length} tasks</div>
+        <div className="agent-run-meta">Run ID: {plan.run_id} · Planner: {plan.planner?.model || "Saved plan"} · {plan.tasks.length} tasks</div>
         <h3>Success criteria</h3>
         <ul className="agent-criteria">{plan.success_criteria.map((criterion, i) => <li key={i}><Check size={14}/>{criterion}</li>)}</ul>
         <h3>Execution tasks</h3>
