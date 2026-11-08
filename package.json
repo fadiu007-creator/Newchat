@@ -8,6 +8,7 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "typecheck": "tsc -b",
+    "test:safety": "node --test tests/*.test.mjs",
     "dev:worker": "wrangler dev",
     "deploy": "npm run build && wrangler deploy"
   },
