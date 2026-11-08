@@ -8,7 +8,52 @@
     <title>Newchat — AI Workspace</title>
   </head>
   <body>
-    <div id="root"><main style="min-height:100vh;display:grid;place-items:center;padding:24px;background:#101114;color:#ececf1;font-family:system-ui,sans-serif"><div style="text-align:center;max-width:420px"><div style="font-size:22px;font-weight:700">newchat</div><p style="color:#a5a5af;font-size:14px">Loading your AI workspace…</p><noscript>JavaScript must be enabled to use Newchat.</noscript></div></main></div>
+    <div id="root"><main style="min-height:100vh;display:grid;place-items:center;padding:24px;background:#101114;color:#ececf1;font-family:system-ui,sans-serif"><div style="text-align:center;max-width:520px"><div style="font-size:22px;font-weight:700">newchat</div><p id="startup-status" style="color:#a5a5af;font-size:14px">Loading your AI workspace…</p><noscript>JavaScript must be enabled to use Newchat.</noscript></div></main></div>
+    <script>
+      (() => {
+        const root = document.getElementById("root");
+        let started = false;
+        const showFailure = (title, detail) => {
+          if (started || !root) return;
+          root.innerHTML = "";
+          const panel = document.createElement("main");
+          panel.style.cssText = "min-height:100vh;display:grid;place-items:center;padding:24px;background:#101114;color:#ececf1;font-family:system-ui,sans-serif";
+          const card = document.createElement("section");
+          card.style.cssText = "max-width:560px;width:100%;padding:24px;border:1px solid #45404f;border-radius:16px;background:#1a1b20";
+          const heading = document.createElement("h1");
+          heading.textContent = title;
+          const message = document.createElement("p");
+          message.style.cssText = "color:#c3c0ca;line-height:1.6";
+          message.textContent = detail;
+          const diagnostic = document.createElement("pre");
+          diagnostic.style.cssText = "white-space:pre-wrap;overflow-wrap:anywhere;color:#ffbaba;font-size:12px";
+          diagnostic.textContent = "Production must run npm run build and publish the dist directory. The source /src/main.tsx must not be served directly.";
+          const reload = document.createElement("button");
+          reload.textContent = "Reload Newchat";
+          reload.style.cssText = "padding:10px 15px;border:0;border-radius:8px;background:#e8e5f2;color:#24212e;font-weight:700";
+          reload.onclick = () => location.reload();
+          card.append(heading, message, diagnostic, reload);
+          panel.append(card);
+          root.append(panel);
+        };
+        window.addEventListener("error", event => {
+          if (event.target && event.target !== window) {
+            showFailure("Newchat assets could not load", event.target.src || event.target.href || "A required frontend asset failed to load.");
+          } else {
+            showFailure("Newchat could not start", event.message || "A JavaScript startup error occurred.");
+          }
+        }, true);
+        window.addEventListener("unhandledrejection", event => {
+          showFailure("Newchat startup failed", event.reason && event.reason.message ? event.reason.message : String(event.reason || "An unhandled startup error occurred."));
+        });
+        window.setTimeout(() => {
+          if (!started && root && root.querySelector("#startup-status")) {
+            showFailure("Newchat did not start", "The frontend entry module did not mount. The deployed site may be serving source files instead of the production build.");
+          }
+        }, 12000);
+        window.__newchatMarkStarted = () => { started = true; };
+      })();
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
