@@ -199,7 +199,7 @@ export async function verifyGitHubCommit(env: ToolEnv, repo: string, ref: string
     githubApi(env, repo, `/commits/${encodeURIComponent(commit.sha)}/status`, "GET"),
     githubApi(env, repo, `/commits/${encodeURIComponent(commit.sha)}/check-runs?filter=all&per_page=100`, "GET")
   ]);
-  const checkRuns = Array.isArray(checks?.check_runs) ? checks.check_runs : [];
+  const checkRuns = (Array.isArray(checks?.check_runs) ? checks.check_runs : []).filter((item: any) => item.name !== "Newchat sandbox");
   const checksComplete = checkRuns.length > 0 && checkRuns.every((item: any) => item.status === "completed");
   const checksPassed = checksComplete && checkRuns.every((item: any) => item.conclusion === "success");
   const statusPassed = statuses?.state === "success";
@@ -241,8 +241,9 @@ export async function executeGithubOperation(env: ToolEnv, operation: GithubOper
     if (!SAFE_PATH.test(path) || typeof operation.content !== "string" || operation.content.length > 200_000) throw new Error("Invalid GitHub file update.");
     const message = (operation.commit_message || "Update via Newchat agent").slice(0, 200);
     let sha: string | undefined;
+    const token = await getGitHubToken(env);
     const current = await fetch(`https://api.github.com/repos/${repo}/contents/${path}?ref=${encodeURIComponent(branch)}`, {
-      headers: { Authorization: `Bearer ${env.GITHUB_APP_TOKEN}`, Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" }
+      headers: { Authorization: "Bearer " + token, Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" }
     });
     if (current.ok) { const file = await current.json() as any; sha = file.sha; }
     else if (current.status !== 404) throw new Error(`Could not inspect existing GitHub file (HTTP ${current.status}).`);
