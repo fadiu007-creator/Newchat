@@ -1,7 +1,7 @@
 import { FormEvent, KeyboardEvent, useMemo, useState } from "react";
 import {
-  ArrowDown, ArrowUp, AudioLines, Bot, Check, ChevronDown, CircleHelp,
-  Command, FilePlus2, Globe2, Menu, MessageSquarePlus, MoreHorizontal,
+  ArrowUp, AudioLines, Bot, Check, ChevronDown, CircleHelp,
+  FilePlus2, Globe2, Menu, MessageSquarePlus, MoreHorizontal,
   PanelLeftClose, Plus, Search, Settings2, Sparkles, SquarePen, X
 } from "lucide-react";
 
