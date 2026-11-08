@@ -129,7 +129,7 @@ b(`model_metrics?${filter}`);
       const permissions = await this.db("agent_tool_permissions?user_id=eq." + encodeURIComponent(userId) + "&tool_name=eq.github&enabled=eq.true&select=config");
       const config = Array.isArray(permissions) ? permissions[0]?.config : null;
       const configuredRepos = Array.isArray(config?.repositories) ? config.repositories.filter((value: unknown) => typeof value === "string") : [];
-      const globalRepos = (this.env.GITHUB_ALLOWED_REPOSITORIES || this.env.GITHUB_SANDBOX_REPOSITORY || "").split(",").map(value => value.trim()).filter(Boolean);
+      const globalRepos = (this.env.GITHUB_ALLOWED_REPOSITORIES || "").split(",").map(value => value.trim()).filter(Boolean);
       const allowedRepositories = configuredRepos.filter((value: string) => !globalRepos.length || globalRepos.includes(value));
       if (!allowedRepositories.length) throw new Error("Enable GitHub tools and add at least one allowed repository in the Agent workspace settings.");
       for (const operation of githubOperations) {
