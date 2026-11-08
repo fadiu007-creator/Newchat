@@ -60,9 +60,12 @@ export default function App() {
   const grouped = useMemo(() => conversations.filter(c => c.messages.length > 0 && c.title.toLowerCase().includes(searchTerm.toLowerCase())), [conversations, searchTerm]);
   useEffect(() => {
     if (!supabase) return;
-    void supabase.auth.getSession().then(({ data }) => setSession(data.session)).catch(error => {
-      setNotice(error instanceof Error ? `Authentication startup failed: ${error.message}` : "Authentication startup failed.");
-    });
+    void supabase.auth.getSession().then(
+      ({ data }) => setSession(data.session),
+      (error: unknown) => {
+        setNotice(error instanceof Error ? `Authentication startup failed: ${error.message}` : "Authentication startup failed.");
+      }
+    );
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, nextSession) => {
       setSession(nextSession);
       setHistoryLoaded(false);
