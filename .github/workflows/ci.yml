@@ -17,4 +17,7 @@ jobs:
       - run: npm install
       - run: npm run build
       - name: Validate Cloudflare Worker bundle
+        env:
+          # Placeholder is used only for the CI dry-run; production uses the encrypted Cloudflare Worker secret.
+          OPENROUTER_API_KEY: ci-dry-run-placeholder
         run: npx wrangler deploy --dry-run
