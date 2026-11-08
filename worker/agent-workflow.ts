@@ -1,0 +1,208 @@
+import { WorkflowEntrypoint, WorkflowStep } from "cloudflare:workers";
+import type { WorkflowEvent } from "cloudflare:workers";
+
+type Env = {
+  SUPABASE_URL?: string;
+  SUPABASE_SERVICE_ROLE_KEY?: string;
+  OPENROUTER_API_KEY?: string;
+  EDENAI_API_KEY?: string;
+};
+type Params = { runId: string; userId: string };
+type Task = {
+  id: string; task_key: string; title: string; description: string;
+  acceptance_criteria: string[]; dependencies: string[]; status: string;
+  attempts: number; task_type?: string;
+};
+type Model = {
+  provider: "openrouter" | "edenai"; model_id: string; display_name: string;
+  capabilities: string[]; is_free: boolean; priority: number;
+};
+type Metric = { provider: string; model_id: string; quality_score: number | null; avg_latency_ms: number | null };
+
+export class AgentWorkflow extends WorkflowEntrypoint<Env, Params> {
+  private async db(path: string, method = "GET", body?: unknown) {
+    if (!this.env.SUPABASE_URL || !this.env.SUPABASE_SERVICE_ROLE_KEY) throw new Error("Agent execution database credentials are not configured.");
+    const response = await fetch(`${this.env.SUPABASE_URL.replace(/\/$/, "")}/rest/v1/${path}`, {
+      method,
+      headers: {
+        apikey: this.env.SUPABASE_SERVICE_ROLE_KEY,
+        Authorization: `Bearer ${this.env.SUPABASE_SERVICE_ROLE_KEY}`,
+        "Content-Type": "application/json",
+        Prefer: "return=representation"
+      },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) })
+    });
+    const raw = await response.text();
+    if (!response.ok) throw new Error(`Database request failed (${response.status}): ${raw.slice(0, 500)}`);
+    return raw ? JSON.parse(raw) as any : null;
+  }
+
+  private async event(runId: string, userId: string, eventType: string, message: string, metadata: unknown = {}) {
+    await this.db("agent_events", "POST", { run_id: runId, user_id: userId, event_type: eventType, message, metadata });
+  }
+
+  private async completeTask(task: Task, run: any, userId: string, model: Model, attempt: number) {
+    const started = Date.now();
+    const endpoint = model.provider === "openrouter"
+      ? "https://openrouter.ai/api/v1/chat/completions"
+      : "https://api.edenai.run/v3/chat/completions";
+    const key = model.provider === "openrouter" ? this.env.OPENROUTER_API_KEY : this.env.EDENAI_API_KEY;
+    if (!key) throw new Error(`${model.provider} is not configured.`);
+    const prompt = [
+      "You are executing one bounded task inside Newchat. Produce a concrete deliverable, not a plan.",
+      "Be explicit about assumptions and limitations. Never claim an external action, deployment, test, or file write happened unless a connected tool actually performed it.",
+      "Return JSON only: {\"deliverable\":\"...\",\"artifacts\":[{\"name\":\"...\",\"mime_type\":\"text/plain\",\"content\":\"...\"}],\"criterion_evidence\":[{\"criterion\":\"...\",\"evidence\":\"...\",\"status\":\"met|not_met|not_verifiable\"}],\"limitations\":[\"...\"]}.",
+      "If code is requested, put complete source files in artifacts. Do not say code was run or deployed.",
+      `Goal: ${run.goal}`,
+      `Task: ${task.title}`,
+      `Description: ${task.description}`,
+      `Acceptance criteria: ${JSON.stringify(task.acceptance_criteria)}`,
+      `Attempt: ${attempt} of ${run.max_attempts}`
+    ].join("\n\n");
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${key}`, "Content-Type": "application/json",
+        ...(model.provider === "openrouter" ? { "HTTP-Referer": "https://newchat.shqiptare.workers.dev", "X-Title": "Newchat Agent" } : {})
+      },
+      body: JSON.stringify({
+        model: model.model_id,
+        messages: [{ role: "system", content: "Return valid JSON only. Do not fabricate tool execution." }, { role: "user", content: prompt }],
+        max_tokens: 6000, temperature: 0.15
+      })
+    });
+    const payload = await response.json() as any;
+    if (!response.ok) throw new Error(payload?.error?.message || payload?.error || `Model request failed (${response.status}).`);
+    const content = payload?.choices?.[0]?.message?.content;
+    const raw = Array.isArray(content) ? content.map((x: any) => x.text || "").join("") : content;
+    if (typeof raw !== "string") throw new Error("Model returned no task deliverable.");
+    const cleaned = raw.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+    const start = cleaned.indexOf("{"), end = cleaned.lastIndexOf("}");
+    if (start < 0 || end <= start) throw new Error("Task response was not valid JSON.");
+    const result = JSON.parse(cleaned.slice(start, end + 1));
+    if (typeof result.deliverable !== "string" || !Array.isArray(result.criterion_evidence)) throw new Error("Task response did not include the required evidence structure.");
+    const evidenceByCriterion = new Map(result.criterion_evidence.map((item: any) => [item.criterion, item]));
+    const allCriteriaAccountedFor = task.acceptance_criteria.every(c => evidenceByCriterion.has(c));
+    const allMet = allCriteriaAccountedFor && task.acceptance_criteria.every(c => (evidenceByCriterion.get(c) as any)?.status === "met" && typeof (evidenceByCriterion.get(c) as any)?.evidence === "string" && (evidenceByCriterion.get(c) as any).evidence.length > 0);
+    const limitations = Array.isArray(result.limitations) ? result.limitations.filter((x: unknown) => typeof x === "string").slice(0, 20) : [];
+    const artifacts = Array.isArray(result.artifacts) ? result.artifacts.filter((x: any) => x && typeof x.name === "string" && typeof x.content === "string").slice(0, 20) : [];
+    return {
+      result: { deliverable: result.deliverable, criterion_evidence: result.criterion_evidence, limitations, model_review_passed: allMet, external_execution: "not_available_in_this_runtime" },
+      artifacts, duration: Date.now() - started, passed: allMet
+    };
+  }
+
+  async run(event: WorkflowEvent<Params>, step: WorkflowStep) {
+    const { runId, userId } = event.payload;
+    const run = await step.do("load-agent-run", async () => {
+      const rows = await this.db(`agent_runs?id=eq.${encodeURIComponent(runId)}&user_id=eq.${encodeURIComponent(userId)}&select=*`);
+      if (!Array.isArray(rows) || !rows[0]) throw new Error("Agent run was not found for this user.");
+      return rows[0];
+    });
+    const start = Date.now();
+    await step.do("mark-run-running", async () => {
+      await this.db(`agent_runs?id=eq.${encodeURIComponent(runId)}&user_id=eq.${encodeURIComponent(userId)}`, "PATCH", {
+        status: "running", started_at: run.started_at || new Date().toISOString(),
+        execution_started_at: run.execution_started_at || new Date().toISOString(), heartbeat_at: new Date().toISOString()
+      });
+      await this.event(runId, userId, "execution_started", "Durable agent execution started.");
+      return { started: true };
+    });
+
+    const tasks = await step.do("load-agent-tasks", async () => {
+      const rows = await this.db(`agent_tasks?run_id=eq.${encodeURIComponent(runId)}&user_id=eq.${encodeURIComponent(userId)}&select=*&order=position.asc`);
+      return rows as Task[];
+    });
+    const models = await step.do("load-model-registry", async () => {
+      const rows = await this.db("model_registry?enabled=eq.true&is_free=eq.true&select=provider,model_id,display_name,capabilities,is_free,priority");
+      return rows as Model[];
+    });
+    const metrics = await step.do("load-model-metrics", async () => {
+      const rows = await this.db("model_metrics?select=provider,model_id,quality_score,avg_latency_ms");
+      return rows as Metric[];
+    });
+    const freeModels = models.length ? models : [{
+      provider: "openrouter" as const, model_id: "openrouter/free", display_name: "OpenRouter Free Router",
+      capabilities: ["general","analysis","coding","writing"], is_free: true, priority: 10
+    }];
+    const metricFor = (m: Model) => metrics.find(x => x.provider === m.provider && x.model_id === m.model_id);
+    const sortedModels = [...freeModels].sort((a, b) => {
+      const am = metricFor(a), bm = metricFor(b);
+      return ((bm?.quality_score ?? 0) - (am?.quality_score ?? 0)) ||
+        ((am?.avg_latency_ms ?? 999999) - (bm?.avg_latency_ms ?? 999999)) || a.priority - b.priority;
+    });
+
+    for (const task of tasks) {
+      if (task.status === "completed" || task.status === "skipped") continue;
+      if (Date.now() - start > run.max_runtime_minutes * 60_000) {
+        await this.db(`agent_runs?id=eq.${encodeURIComponent(runId)}&user_id=eq.${encodeURIComponent(userId)}`, "PATCH", { status: "blocked", last_error: "Maximum runtime reached." });
+        await this.event(runId, userId, "runtime_limit", "Run paused because its maximum runtime was reached.");
+        return { status: "blocked", reason: "runtime_limit" };
+      }
+      const dependencies = task.dependencies || [];
+      const unmet = tasks.filter(t => dependencies.includes(t.task_key) && t.status !== "completed");
+      if (unmet.length) {
+        await this.db(`agent_tasks?id=eq.${encodeURIComponent(task.id)}&user_id=eq.${encodeURIComponent(userId)}`, "PATCH", { status: "blocked", error: "Dependencies are not complete." });
+        continue;
+      }
+      let success = false;
+      let lastFailure = "";
+      const maxAttempts = Math.max(1, Math.min(10, Number(run.max_attempts) || 3));
+      for (let attempt = Math.max(1, (task.attempts || 0) + 1); attempt <= maxAttempts && !success; attempt++) {
+        const model = sortedModels.find(m => (m.capabilities || []).includes(task.task_type || "general")) || sortedModels[0];
+        const stepName = `task-${task.id}-attempt-${attempt}`.slice(0, 240);
+        const outcome = await step.do(stepName, { retries: { limit: 1, delay: "5 seconds", backoff: "exponential" } }, async () => {
+          await this.db(`agent_tasks?id=eq.${encodeURIComponent(task.id)}&user_id=eq.${encodeURIComponent(userId)}`, "PATCH", {
+            status: "running", attempts: attempt, assigned_provider: model.provider, assigned_model: model.model_id,
+            verification_status: "running", error: null
+          });
+          await this.event(runId, userId, "task_started", `Started: ${task.title}`, { task_id: task.id, attempt, provider: model.provider, model: model.model_id });
+          const result = await this.completeTask(task, run, userId, model, attempt);
+          await this.db("agent_steps", "POST", {
+            run_id: runId, task_id: task.id, user_id: userId, attempt, step_type: "model",
+            provider: model.provider, model: model.model_id, input_summary: task.title,
+            output_summary: result.result.deliverable.slice(0, 3000), status: "completed",
+            duration_ms: result.duration, cost_usd: 0, metadata: { free_route: true }
+          });
+          for (const artifact of result.artifacts) {
+            await this.db("agent_artifacts", "POST", {
+              run_id: runId, task_id: task.id, user_id: userId, name: artifact.name.slice(0, 240),
+              mime_type: typeof artifact.mime_type === "string" ? artifact.mime_type.slice(0, 120) : "text/plain",
+              content_text: artifact.content, metadata: { provider: model.provider, model: model.model_id }
+            });
+          }
+          await this.db(`agent_tasks?id=eq.${encodeURIComponent(task.id)}&user_id=eq.${encodeURIComponent(userId)}`, "PATCH", {
+            status: result.passed ? "completed" : (attempt === maxAttempts ? "failed" : "ready"),
+            verification_status: result.passed ? "passed" : (attempt === maxAttempts ? "needs_review" : "failed"),
+            result: result.result, evidence: result.result.criterion_evidence,
+            error: result.passed ? null : "One or more acceptance criteria were not evidenced."
+          });
+          await this.event(runId, userId, result.passed ? "task_completed" : "task_verification_failed",
+            result.passed ? `Completed: ${task.title}` : `Acceptance criteria not satisfied: ${task.title}`,
+            { task_id: task.id, attempt, artifacts: result.artifacts.length, limitations: result.result.limitations });
+          return { passed: result.passed, result: result.result };
+        });
+        success = outcome.passed;
+        if (!success) lastFailure = "Acceptance criteria were not evidenced.";
+      }
+      if (!success) {
+        await this.event(runId, userId, "task_failed", `Task failed after bounded attempts: ${task.title}`, { task_id: task.id, error: lastFailure });
+      }
+    }
+
+    const finalTasks = await step.do("reload-final-task-statuses", async () =>
+      await this.db(`agent_tasks?run_id=eq.${encodeURIComponent(runId)}&user_id=eq.${encodeURIComponent(userId)}&select=status`));
+    const allCompleted = Array.isArray(finalTasks) && finalTasks.length > 0 && finalTasks.every((t: any) => t.status === "completed" || t.status === "skipped");
+    const terminal = allCompleted ? "completed" : "blocked";
+    await step.do("persist-final-run-status", async () => {
+      await this.db(`agent_runs?id=eq.${encodeURIComponent(runId)}&user_id=eq.${encodeURIComponent(userId)}`, "PATCH", {
+        status: terminal, finished_at: new Date().toISOString(), heartbeat_at: new Date().toISOString()
+      });
+      await this.event(runId, userId, terminal, allCompleted
+        ? "All task acceptance checks passed. Review the recorded limitations and evidence."
+        : "Execution stopped with blocked or failed tasks. Review task evidence and limitations.");
+      return { status: terminal };
+    });
+    return { status: terminal };
+  }
+}
