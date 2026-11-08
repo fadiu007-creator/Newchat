@@ -100,11 +100,17 @@ export class AgentWorkflow extends WorkflowEntrypoint<Env, Params> {
     if (start < 0 || end <= start) throw new Error("Task response was not valid JSON.");
     const result = JSON.parse(cleaned.slice(start, end + 1));
     if (typeof result.deliverable !== "string" || !Array.isArray(result.criterion_evidence)) throw new Error("Task response did not include the required evidence structure.");
-    const evidenceByCriterion = new Map(result.criterion_evidence.map((item: any) => [item.criterion, item]));
-    const allCriteriaAccountedFor = task.acceptance_criteria.every(c => evidenceByCriterion.has(c));
-    const allMet = allCriteriaAccountedFor && task.acceptance_criteria.every(c => (evidenceByCriterion.get(c) as any)?.status === "met" && typeof (evidenceByCriterion.get(c) as any)?.evidence === "string" && (evidenceByCriterion.get(c) as any).evidence.length > 0);
     const limitations = Array.isArray(result.limitations) ? result.limitations.filter((x: unknown) => typeof x === "string").slice(0, 20) : [];
     const artifacts = Array.isArray(result.artifacts) ? result.artifacts.filter((x: any) => x && typeof x.name === "string" && typeof x.content === "string").slice(0, 20) : [];
+    const evidenceByCriterion = new Map(result.criterion_evidence.map((item: any) => [item.criterion, item]));
+    const evidenceCorpus = [result.deliverable, ...artifacts.map((artifact: any) => artifact.content)].join("\n");
+    const allCriteriaAccountedFor = task.acceptance_criteria.every(c => evidenceByCriterion.has(c));
+    // A model's assertion is not evidence: the quoted evidence must occur verbatim in a saved deliverable.
+    const allMet = allCriteriaAccountedFor && task.acceptance_criteria.every(c => {
+      const item = evidenceByCriterion.get(c) as any;
+      return item?.status === "met" && typeof item?.evidence === "string" &&
+        item.evidence.trim().length >= 12 && evidenceCorpus.includes(item.evidence.trim());
+    });
     return {
       result: { deliverable: result.deliverable, criterion_evidence: result.criterion_evidence, limitations, model_review_passed: allMet, external_execution: "not_available_in_this_runtime" },
       artifacts, duration: Date.now() - started, passed: allMet
@@ -145,10 +151,18 @@ export class AgentWorkflow extends WorkflowEntrypoint<Env, Params> {
       capabilities: ["general","analysis","coding","writing"], is_free: true, priority: 10
     }];
     const metricFor = (m: Model) => metrics.find(x => x.provider === m.provider && x.model_id === m.model_id);
+    // All execution candidates are explicitly free. Paid models are intentionally excluded until
+    // the approval workflow and real cost accounting are enabled.
+    const strategy = run.strategy || "balanced";
     const sortedModels = [...freeModels].sort((a, b) => {
       const am = metricFor(a), bm = metricFor(b);
-      return ((bm?.quality_score ?? 0) - (am?.quality_score ?? 0)) ||
-        ((am?.avg_latency_ms ?? 999999) - (bm?.avg_latency_ms ?? 999999)) || a.priority - b.priority;
+      const aq = am?.quality_score ?? 0, bq = bm?.quality_score ?? 0;
+      const al = am?.avg_latency_ms ?? 120000, bl = bm?.avg_latency_ms ?? 120000;
+      if (strategy === "best_quality") return (bq - aq) || a.priority - b.priority;
+      if (strategy === "free_first") return Number(b.is_free) - Number(a.is_free) || (bq - aq) || a.priority - b.priority;
+      const aScore = aq * 0.75 + (1 / (1 + al / 30000)) * 0.25;
+      const bScore = bq * 0.75 + (1 / (1 + bl / 30000)) * 0.25;
+      return (bScore - aScore) || a.priority - b.priority;
     });
 
     for (const task of tasks) {
