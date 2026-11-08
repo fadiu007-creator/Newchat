@@ -8,4 +8,4 @@ binding = "ASSETS"
 not_found_handling = "single-page-application"
 
 [vars]
-ALLOWED_ORIGIN = "https://newchat.pages.dev"
+ALLOWED_ORIGIN = "https://newchat.shqiptare.workers.dev"
