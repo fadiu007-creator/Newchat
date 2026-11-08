@@ -14,7 +14,7 @@ A multi-provider AI chat application and goal-based autonomous agent. Newchat ru
 ## Local development
 
 ```bash
-npm ci
+npm install
 cp .env.example .env
 npm run dev
 # In a second terminal:
@@ -127,7 +127,7 @@ If deployment is not enabled, the workflow is skipped. A green build alone is no
 Run locally:
 
 ```bash
-npm ci
+npm install
 npm run test:safety
 npm run build
 npx wrangler deploy --dry-run
