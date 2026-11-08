@@ -1,77 +1,101 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import {
+  validateSandboxRequest,
+  enforceSpendBudget,
+  classifyConsequentialAction
+} from "../worker/tool-adapters.ts";
 
-const source = await readFile(new URL("../worker/tool-adapters.ts", import.meta.url), "utf8");
+const adapters = await readFile(new URL("../worker/tool-adapters.ts", import.meta.url), "utf8");
+const workflow = await readFile(new URL("../worker/agent-workflow.ts", import.meta.url), "utf8");
+const worker = await readFile(new URL("../worker/index.ts", import.meta.url), "utf8");
+const sandboxWorkflow = await readFile(new URL("../.github/workflows/agent-sandbox.yml", import.meta.url), "utf8");
+const sandboxRunner = await readFile(new URL("../scripts/agent-sandbox-runner.mjs", import.meta.url), "utf8");
+const paidMigration = await readFile(new URL("../supabase/migrations/014_agent_paid_model_approval_reservation.sql", import.meta.url), "utf8");
 
-test("sandbox adapter requires HTTPS and authenticated remote runner", () => {
-  assert.match(source, /SANDBOX_RUNNER_URL/);
-  assert.match(source, /SANDBOX_RUNNER_TOKEN/);
-  assert.match(source, /endpoint\.protocol !== "https:"/);
-  assert.match(source, /network: "disabled"/);
-  assert.match(source, /filesystem: "ephemeral"/);
+test("sandbox is dispatched to GitHub Actions and requires an independent check-run receipt", () => {
+  assert.match(adapters, /actions\/workflows\/agent-sandbox\.yml\/dispatches/);
+  assert.match(adapters, /external_id === requestId/);
+  assert.match(adapters, /independent_check_run_id/);
+  assert.match(sandboxWorkflow, /workflow_dispatch/);
+  assert.match(sandboxWorkflow, /checks: write/);
+  assert.match(sandboxWorkflow, /Newchat sandbox/);
 });
 
-test("sandbox adapter bounds source size, paths, commands and runtime", () => {
-  assert.match(source, /MAX_FILES = 30/);
-  assert.match(source, /MAX_FILE_BYTES = 256_000/);
-  assert.match(source, /MAX_TOTAL_BYTES = 1_000_000/);
-  assert.match(source, /timeout < 1000 \|\| timeout > 180000/);
-  assert.match(source, /Command must be a bounded argument array/);
+test("sandbox runner uses an ephemeral network-disabled container with resource limits", () => {
+  for (const flag of ["--network", "none", "--cpus=1", "--memory=512m", "--pids-limit=128", "--read-only", "--cap-drop=ALL", "--security-opt=no-new-privileges"]) {
+    assert.ok(sandboxRunner.includes(flag), "missing sandbox isolation flag: " + flag);
+  }
+  assert.match(sandboxRunner, /process\.exit/);
+  assert.match(sandboxRunner, /timeout_ms/);
+  assert.match(sandboxRunner, /sandbox-result\/receipt\.json/);
 });
 
-test("GitHub adapter uses a server secret and restricts repository and API path formats", () => {
-  assert.match(source, /GITHUB_APP_TOKEN/);
-  assert.match(source, /SAFE_REPO/);
-  assert.match(source, /path\.includes\("\.\."\)/);
-  assert.match(source, /api\.github\.com/);
+test("sandbox validator accepts a bounded JavaScript job", () => {
+  assert.deepEqual(validateSandboxRequest({
+    language: "javascript",
+    files: [{ path: "src/main.js", content: "console.log('ok')" }],
+    command: ["node", "--test"],
+    timeout_ms: 5000
+  }), []);
 });
 
-test("independent GitHub verification requires successful commit statuses and check runs", () => {
-  assert.match(source, /verifyGitHubCommit/);
-  assert.match(source, /statuses\?\.state === "success"/);
-  assert.match(source, /item\.conclusion === "success"/);
-  assert.match(source, /checksOk/);
+test("sandbox validator rejects traversal, duplicate paths, oversized source and shell injection", () => {
+  assert.ok(validateSandboxRequest({ language: "python", files: [{ path: "../escape.py", content: "x" }], command: ["python3", "x.py"] }).length > 0);
+  assert.ok(validateSandboxRequest({ language: "javascript", files: [{ path: "a.js", content: "x" }, { path: "a.js", content: "y" }], command: ["node", "a.js"] }).length > 0);
+  assert.ok(validateSandboxRequest({ language: "javascript", files: [{ path: "a.js", content: "x".repeat(16001) }], command: ["node", "a.js"] }).length > 0);
+  assert.ok(validateSandboxRequest({ language: "javascript", files: [{ path: "a.js", content: "x" }], command: ["node", "-e", "x; rm -rf /"] }).length > 0);
+  assert.ok(validateSandboxRequest({ language: "javascript", files: [{ path: "a.js", content: "x" }], command: ["node", "a.js"], timeout_ms: 181000 }).length > 0);
 });
 
-test("spend enforcement rejects projected spend above the explicit budget", () => {
-  assert.match(source, /enforceSpendBudget/);
-  assert.match(source, /projected <= budgetUsd/);
+test("GitHub operations enforce repository allowlists and expose explicit bounded operations", () => {
+  assert.match(adapters, /GITHUB_ALLOWED_REPOSITORIES/);
+  assert.match(adapters, /allowed\.includes\(repo\)/);
+  assert.match(adapters, /read_file.*list_directory.*create_branch.*upsert_file/s);
+  assert.match(adapters, /create_pull_request/);
+  assert.match(adapters, /merge_pull_request/);
 });
 
-test("consequential action classes are centrally identified", () => {
-  assert.match(source, /github_write.*deployment.*database_write.*external_message.*purchase.*delete_data.*paid_model/);
+test("GitHub writes pause for owner approval and resume only after consuming a matching approval", () => {
+  assert.match(workflow, /action_type: "github_write"/);
+  assert.match(workflow, /action_hash/);
+  assert.match(workflow, /consumed_at=is\.null/);
+  assert.match(workflow, /approval_pending/);
+  assert.match(worker, /approval\/decision/);
 });
 
-const sandboxSource = await readFile(new URL("../worker/sandbox.ts", import.meta.url), "utf8");
-const workflowSource = await readFile(new URL("../worker/agent-workflow.ts", import.meta.url), "utf8");
-
-test("Cloudflare Container sandbox runs without outbound internet and uses bounded workspace inputs", async () => {
-  assert.match(sandboxSource, /container\.start\(\{ image: container\.images\.workspace, enableInternet: false \}\)/);
-  assert.match(await readFile(new URL("../worker/sandbox-validation.ts", import.meta.url), "utf8"), /MAX_FILES = 30/);
-  assert.match(await readFile(new URL("../worker/sandbox-validation.ts", import.meta.url), "utf8"), /MAX_TOTAL_BYTES = 1_000_000/);
-  assert.match(await readFile(new URL("../worker/sandbox-validation.ts", import.meta.url), "utf8"), /MAX_TIMEOUT_MS = 180_000/);
-  assert.match(await readFile(new URL("../worker/sandbox-validation.ts", import.meta.url), "utf8"), /SAFE_PATH/);
-  assert.match(sandboxSource, /new Files\(ctx\.container\)/);
+test("independent GitHub verification requires a real commit, successful status and completed successful checks", () => {
+  assert.match(adapters, /commit\.commit\?\.tree\?\.sha/);
+  assert.match(adapters, /statuses\?\.state === "success"/);
+  assert.match(adapters, /item\.conclusion === "success"/);
+  assert.match(adapters, /checksPassed/);
 });
 
-test("coding tasks require actual Cloudflare sandbox execution and successful exit receipt", () => {
-  assert.match(workflowSource, /task\.task_type === "coding"/);
-  assert.match(workflowSource, /AGENT_SANDBOX\.getByName/);
-  assert.match(workflowSource, /execution\?\.passed === true/);
-  assert.match(workflowSource, /sandbox_exit_code/);
+test("paid models require an explicit matching approval and an atomic spend reservation", () => {
+  assert.match(worker, /approval_required: true/);
+  assert.match(worker, /reserve_paid_model_call/);
+  assert.match(worker, /daily_budget_usd: 1/);
+  assert.match(paidMigration, /pg_advisory_xact_lock/);
+  assert.match(paidMigration, /status = 'approved'/);
+  assert.match(paidMigration, /consumed_at is null/);
+  assert.match(paidMigration, /v_spent \+ p_estimated_cost > p_daily_budget/);
 });
 
-const { validateSandboxJob } = await import("../worker/sandbox-validation.ts");
-
-test("sandbox validator accepts a bounded, relative workspace job", () => {
-  assert.deepEqual(validateSandboxJob({ files: [{ path: "src/main.py", content: "print('ok')" }], argv: ["python3", "src/main.py"], timeout_ms: 5000 }), []);
+test("budget helper rejects negative and over-budget projected spend", () => {
+  assert.deepEqual(enforceSpendBudget({ spentUsd: 0.2, estimatedUsd: 0.3, budgetUsd: 1 }).allowed, true);
+  assert.deepEqual(enforceSpendBudget({ spentUsd: 0.8, estimatedUsd: 0.3, budgetUsd: 1 }).allowed, false);
+  assert.throws(() => enforceSpendBudget({ spentUsd: -1, estimatedUsd: 0, budgetUsd: 1 }));
 });
 
-test("sandbox validator rejects traversal, absolute paths, oversized jobs and shell chaining", () => {
-  assert.ok(validateSandboxJob({ files: [{ path: "../escape", content: "x" }], argv: ["python3"] }).length > 0);
-  assert.ok(validateSandboxJob({ files: [{ path: "/etc/passwd", content: "x" }], argv: ["python3"] }).length > 0);
-  assert.ok(validateSandboxJob({ files: [{ path: "main.py", content: "x" }], argv: ["bash", "-c", "echo x; rm -rf /"] }).length > 0);
-  assert.ok(validateSandboxJob({ files: [{ path: "main.py", content: "x" }], argv: ["python3"], timeout_ms: 181000 }).length > 0);
-  assert.ok(validateSandboxJob({ files: [{ path: "main.py", content: "x".repeat(256001) }], argv: ["python3"] }).length > 0);
+test("consequential operations are centrally classified", () => {
+  for (const action of ["github_write", "deployment", "database_write", "external_message", "purchase", "delete_data", "paid_model"]) {
+    assert.equal(classifyConsequentialAction(action), true);
+  }
+  assert.equal(classifyConsequentialAction("read_file"), false);
+});
+
+test("Worker source is complete and exposes the deployed build identity", () => {
+  assert.equal(worker.includes("truncated — re-run"), false);
+  assert.match(worker, /build_sha: env\.APP_COMMIT_SHA/);
 });
