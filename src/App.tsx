@@ -165,11 +165,11 @@ function AgentWorkspace({ session, onSignIn }: { session: Session | null; onSign
           <label>Model strategy<select value={strategy} onChange={e => setStrategy(e.target.value as typeof strategy)}>
             <option value="balanced">Balanced · cost and quality</option>
             <option value="free_first">Free models first</option>
-            <option value="best_quality">Best quality · approval before paid use</option>
+            <option value="best_quality">Best quality · rank free models</option>
           </select></label>
           <label>Maximum spend (USD)<input type="number" min="0" max="1000" step="0.50" value={budget} onChange={e => setBudget(e.target.value)}/></label>
         </div>
-        <p className="agent-strategy-note">The selected strategy is saved with this run. Per-task model routing and paid-model approval are part of the execution phase; planning currently uses OpenRouter’s free route.</p>
+        <p className="agent-strategy-note">The strategy is saved with this run. Execution currently ranks only the explicitly free OpenRouter models; paid-model approval and paid routing are not enabled yet.</p>
         <div className="agent-form-footer">
           <span><Check size={14}/> No manual model selection · free planning route</span>
           <button type="submit" className="agent-plan-button" disabled={planning || goal.trim().length < 3}>
