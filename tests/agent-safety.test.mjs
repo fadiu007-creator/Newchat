@@ -68,6 +68,7 @@ test("GitHub operations enforce repository allowlists and expose explicit bounde
 test("GitHub writes pause for owner approval and resume only after consuming a matching approval", () => {
   assert.match(workflow, /action_type: "github_write"/);
   assert.match(workflow, /action_hash/);
+  assert.match(workflow, /sha256Hex\(canonicalJson\(operation\)\)/);
   assert.match(workflow, /consumed_at=is\.null/);
   assert.match(workflow, /approval_pending/);
   assert.match(worker, /approval\/decision/);
