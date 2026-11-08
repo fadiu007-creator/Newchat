@@ -177,7 +177,8 @@ export class AgentWorkflow extends WorkflowEntrypoint<Env, Params> {
           });
           await this.event(runId, userId, "task_started", `Started: ${task.title}`, { task_id: task.id, attempt, provider: model.provider, model: model.model_id });
           const result = await this.completeTask(task, run, userId, model, attempt);
-          await this.recordMetric(model, task.task_type || "general", result.duration, result.passed);\n          await this.db("agent_steps", "POST", {
+          await this.recordMetric(model, task.task_type || "general", result.duration, result.passed);
+          await this.db("agent_steps", "POST", {
             run_id: runId, task_id: task.id, user_id: userId, attempt, step_type: "model",
             provider: model.provider, model: model.model_id, input_summary: task.title,
             output_summary: result.result.deliverable.slice(0, 3000), status: "completed",
