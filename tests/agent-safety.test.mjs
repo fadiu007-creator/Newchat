@@ -12,6 +12,7 @@ import { extractProviderText, orderModelFallbacks, orderTasksByDependencies, par
 
 const adapters = await readFile(new URL("../worker/tool-adapters.ts", import.meta.url), "utf8");
 const workflow = await readFile(new URL("../worker/agent-workflow.ts", import.meta.url), "utf8");
+const app = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
 const worker = await readFile(new URL("../worker/index.ts", import.meta.url), "utf8");
 const sandboxWorkflow = await readFile(new URL("../.github/workflows/agent-sandbox.yml", import.meta.url), "utf8");
 const sandboxRunner = await readFile(new URL("../scripts/agent-sandbox-runner.mjs", import.meta.url), "utf8");
@@ -203,4 +204,12 @@ test("planner classifies web setup, rendering, animation and app functionality a
   assert.match(worker, /max_tokens: 4000/);
   assert.match(worker, /finish_reason === "length"/);
   assert.match(worker, /editable SVG or HTML\/CSS\/JavaScript artwork/);
+});
+
+test("agent status polling reconciles terminal Cloudflare Workflow states into durable run status", () => {
+  assert.match(worker, /\["errored", "terminated", "complete"\]/);
+  assert.match(worker, /Workflow completed with incomplete or failed tasks/);
+  assert.match(worker, /workflow_status_reconciled/);
+  assert.match(app, /\/api\/agent\/status\?run_id=/);
+  assert.match(app, /workflowResult\?\.run\?\.status \|\| runData\.status/);
 });
