@@ -22,3 +22,85 @@ jobs:
           OPENROUTER_API_KEY: ci-dry-run-placeholder
           SUPABASE_SERVICE_ROLE_KEY: ci-dry-run-placeholder
         run: npx wrangler deploy --dry-run
+
+  sandbox-integration:
+    needs: build-and-safety-tests
+    if: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      checks: read
+      contents: read
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/github-script@v7
+        name: Dispatch and verify a real isolated sandbox run
+        with:
+          script: |
+            const requestId = crypto.randomUUID();
+            const payload = Buffer.from(JSON.stringify({
+              language: "javascript",
+              files: [{ path: "sandbox-smoke.js", content: "console.log('newchat-sandbox-ok')" }],
+              command: ["node", "sandbox-smoke.js"],
+              timeout_ms: 10000
+            })).toString("base64");
+
+            const targetRef = context.eventName === "pull_request"
+              ? context.payload.pull_request.head.ref
+              : (context.ref.startsWith("refs/heads/") ? context.ref.slice("refs/heads/".length) : context.ref);
+
+            await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: "agent-sandbox.yml",
+              ref: targetRef,
+              inputs: { request_id: requestId, payload }
+            });
+
+            const deadline = Date.now() + 240000;
+            let run = null;
+            while (Date.now() < deadline) {
+              const response = await github.rest.actions.listWorkflowRuns({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                workflow_id: "agent-sandbox.yml",
+                branch: targetRef,
+                event: "workflow_dispatch",
+                per_page: 50
+              });
+              run = response.data.workflow_runs.find(item =>
+                item.display_title === `Newchat sandbox ${requestId}` ||
+                item.display_title?.includes(requestId)
+              ) || null;
+              if (run?.status === "completed") break;
+              await new Promise(resolve => setTimeout(resolve, 5000));
+            }
+
+            if (!run || run.status !== "completed" || run.conclusion !== "success") {
+              throw new Error("Isolated sandbox workflow did not complete successfully within four minutes.");
+            }
+
+            const checks = await github.rest.checks.listForRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: run.head_sha,
+              filter: "all",
+              per_page: 100
+            });
+            const receiptCheck = checks.data.check_runs.find(item =>
+              item.name === "Newchat sandbox" && item.external_id === requestId
+            );
+            if (!receiptCheck || receiptCheck.status !== "completed" ||
+                receiptCheck.conclusion !== "success" || !receiptCheck.output?.summary) {
+              throw new Error("Sandbox workflow completed without a successful independent check-run receipt.");
+            }
+
+            const receipt = JSON.parse(receiptCheck.output.summary);
+            if (receipt.request_id !== requestId || receipt.passed !== true ||
+                receipt.exit_code !== 0 || !receipt.stdout.includes("newchat-sandbox-ok")) {
+              throw new Error("Sandbox receipt did not prove the expected command executed successfully.");
+            }
+
+            core.notice(`Verified isolated sandbox workflow ${run.html_url}`);
+            core.notice(`Verified independent receipt check ${receiptCheck.html_url}`);
