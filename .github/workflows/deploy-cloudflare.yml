@@ -26,8 +26,7 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           GITHUB_SHA: ${{ github.sha }}
         run: |
-          printf '{}' > /tmp/newchat-preserve-secrets.json
-          npx wrangler deploy --var APP_COMMIT_SHA:${GITHUB_SHA} --secrets-file /tmp/newchat-preserve-secrets.json
+          npx wrangler deploy --var APP_COMMIT_SHA:${GITHUB_SHA}
       - name: Verify the live deployment independently
         env:
           EXPECTED_SHA: ${{ github.sha }}
