@@ -161,16 +161,19 @@ function AgentWorkspace({ session, onSignIn }: { session: Session | null; onSign
 
   async function refreshRun(runId: string) {
     if (!supabase || !session) return;
-    const [runResult, taskResult, eventResult, artifactResult, approvalResult] = await Promise.all([
+    const [runResult, taskResult, eventResult, artifactResult, approvalResult, workflowResult] = await Promise.all([
       supabase.from("agent_runs").select("id,status,summary,success_criteria").eq("id", runId).maybeSingle(),
       supabase.from("agent_tasks").select("id,task_key,position,title,description,acceptance_criteria,dependencies,status,verification_status,result").eq("run_id", runId).order("position"),
       supabase.from("agent_events").select("id,event_type,message,created_at").eq("run_id", runId).order("created_at", { ascending: false }).limit(30),
       supabase.from("agent_artifacts").select("id,name,mime_type,content_text,created_at").eq("run_id", runId).order("created_at", { ascending: false }).limit(30),
-      supabase.from("agent_approvals").select("id,run_id,action_type,description,payload,created_at,expires_at").eq("run_id", runId).eq("status", "pending").order("created_at", { ascending: false }).limit(20)
+      supabase.from("agent_approvals").select("id,run_id,action_type,description,payload,created_at,expires_at").eq("run_id", runId).eq("status", "pending").order("created_at", { ascending: false }).limit(20),
+      fetch("/api/agent/status?run_id=" + encodeURIComponent(runId), {
+        headers: { Authorization: "Bearer " + session.access_token }
+      }).then(async response => response.ok ? await response.json() as { run?: { status?: string } } : null).catch(() => null)
     ]);
     const runData = runResult.data;
     if (runData) setPlan(previous => previous && previous.run_id === runId ? {
-      ...previous, status: runData.status, summary: runData.summary,
+      ...previous, status: workflowResult?.run?.status || runData.status, summary: runData.summary,
       success_criteria: runData.success_criteria || [],
       tasks: taskResult.data || previous.tasks
     } : previous);
