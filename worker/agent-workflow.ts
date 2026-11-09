@@ -106,7 +106,7 @@ export class AgentWorkflow extends WorkflowEntrypoint<Env, Params> {
     return { refreshed, available: availableIds.size, disabled };
   }
 
-  private async completeTask(task: Task, run: any, userId: string, model: Model, attempt: number, previousFailure = ""): Promise<{ result: any; artifacts: any[]; duration: number; passed: boolean; approval_pending?: boolean }> {
+  private async completeTask(task: Task, run: any, userId: string, model: Model, attempt: number, previousFailure = "", maxAttempts = Number(run.max_attempts) || 3): Promise<{ result: any; artifacts: any[]; duration: number; passed: boolean; approval_pending?: boolean }> {
     const started = Date.now();
     const endpoint = model.provider === "openrouter"
       ? "https://openrouter.ai/api/v1/chat/completions"
@@ -124,7 +124,7 @@ export class AgentWorkflow extends WorkflowEntrypoint<Env, Params> {
       `Task: ${task.title}`,
       `Description: ${task.description}`,
       `Acceptance criteria: ${JSON.stringify(task.acceptance_criteria)}`,
-      `Attempt: ${attempt} of ${run.max_attempts}`,
+      `Attempt: ${attempt} of ${maxAttempts}`,
       `Previous attempt feedback to repair: ${previousFailure || "No previous attempt."}`
     ].join("\n\n");
     const response = await fetch(endpoint, {
@@ -327,7 +327,7 @@ export class AgentWorkflow extends WorkflowEntrypoint<Env, Params> {
             verification_status: "running", error: null
           });
           await this.event(runId, userId, "task_started", `Started: ${task.title}`, { task_id: task.id, attempt, provider: model.provider, model: model.model_id });
-          const result = await this.completeTask(task, run, userId, model, attempt, lastFailure);
+          const result = await this.completeTask(task, run, userId, model, attempt, lastFailure, boundedAttempts);
           if (result.approval_pending) {
             await this.db("agent_tasks?id=eq." + encodeURIComponent(task.id) + "&user_id=eq." + encodeURIComponent(userId), "PATCH", { status: "blocked", verification_status: "not_started", result: result.result, error: "Waiting for owner approval before a GitHub write operation." });
             await this.db("agent_runs?id=eq." + encodeURIComponent(runId) + "&user_id=eq." + encodeURIComponent(userId), "PATCH", { status: "blocked", last_error: "A GitHub operation is waiting for owner approval." });
