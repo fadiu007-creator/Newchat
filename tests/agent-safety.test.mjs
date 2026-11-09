@@ -4,7 +4,9 @@ import { readFile } from "node:fs/promises";
 import {
   validateSandboxRequest,
   enforceSpendBudget,
-  classifyConsequentialAction
+  classifyConsequentialAction,
+  selectLatestCheckRuns,
+  isCombinedStatusSatisfied
 } from "../worker/tool-adapters.ts";
 
 const adapters = await readFile(new URL("../worker/tool-adapters.ts", import.meta.url), "utf8");
@@ -76,9 +78,21 @@ test("GitHub writes pause for owner approval and resume only after consuming a m
 
 test("independent GitHub verification requires a real commit, successful status and completed successful checks", () => {
   assert.match(adapters, /commit\.commit\?\.tree\?\.sha/);
-  assert.match(adapters, /statuses\?\.state === "success"/);
   assert.match(adapters, /item\.conclusion === "success"/);
+  assert.match(adapters, /selectLatestCheckRuns/);
+  assert.match(adapters, /isCombinedStatusSatisfied/);
   assert.match(adapters, /checksPassed/);
+  const selected = selectLatestCheckRuns([
+    { id: 10, name: "Cloudflare build", app: { slug: "cloudflare-workers-and-pages" }, status: "completed", conclusion: "failure", started_at: "2026-11-09T00:00:00Z" },
+    { id: 11, name: "Cloudflare build", app: { slug: "cloudflare-workers-and-pages" }, status: "completed", conclusion: "success", started_at: "2026-11-09T01:00:00Z" },
+    { id: 12, name: "GitHub CI", app: { slug: "github-actions" }, status: "completed", conclusion: "success", started_at: "2026-11-09T00:30:00Z" },
+    { id: 13, name: "Newchat sandbox", app: { slug: "github-actions" }, status: "completed", conclusion: "success", started_at: "2026-11-09T02:00:00Z" }
+  ]);
+  assert.equal(selected.length, 2);
+  assert.equal(selected.find(item => item.name === "Cloudflare build").conclusion, "success");
+  assert.equal(isCombinedStatusSatisfied({ state: "pending", statuses: [] }, true), true);
+  assert.equal(isCombinedStatusSatisfied({ state: "pending", statuses: [{ state: "pending" }] }, true), false);
+  assert.equal(isCombinedStatusSatisfied({ state: "success", statuses: [] }, false), true);
 });
 
 test("paid models require an explicit matching approval and an atomic spend reservation", () => {
