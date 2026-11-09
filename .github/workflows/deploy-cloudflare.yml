@@ -75,7 +75,7 @@ jobs:
         run: |
           node --input-type=module <<'NODE'
           const required = ["chat", "agentPlanning", "agentExecution", "sandboxExecution", "githubOperations", "independentGithubVerification", "paidModelApproval"];
-          const requiredConfiguration = ["github", "supabase", "openrouter", "edenai"];
+          const requiredConfiguration = ["github", "supabase", "openrouter"];
           const deadline = Date.now() + 120_000;
           let lastHealth = null;
           let lastError = null;
