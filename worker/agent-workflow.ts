@@ -321,7 +321,7 @@ export class AgentWorkflow extends WorkflowEntrypoint<Env, Params> {
         const attemptStarted = Date.now();
         let outcome: { passed: boolean; result: any } | null = null;
         try {
-          outcome = await step.do(stepName, { retries: { limit: 0 } }, async () => {
+          outcome = await step.do(stepName, { retries: { limit: 1, delay: "5 seconds", backoff: "exponential" } }, async () => {
           await this.db(`agent_tasks?id=eq.${encodeURIComponent(task.id)}&user_id=eq.${encodeURIComponent(userId)}`, "PATCH", {
             status: "running", attempts: attempt, assigned_provider: model.provider, assigned_model: model.model_id,
             verification_status: "running", error: null
