@@ -1,4 +1,5 @@
 import { executeSandbox, executeGithubOperation, sha256Hex, type GithubOperation } from "./tool-adapters";
+import { extractProviderText, orderModelFallbacks, parseJsonObject } from "./agent-utils";
 import { WorkflowEntrypoint, WorkflowStep } from "cloudflare:workers";
 import type { WorkflowEvent } from "cloudflare:workers";
 
@@ -77,6 +78,34 @@ export class AgentWorkflow extends WorkflowEntrypoint<Env, Params> {
     else await this.db("model_metrics", "POST", values);
   }
 
+  private async refreshOpenRouterFreeRegistry(): Promise<{ refreshed: number; available: number; disabled: number }> {
+    const response = await fetch("https://openrouter.ai/api/v1/models", {
+      headers: { "HTTP-Referer": "https://newchat.shqiptare.workers.dev", "X-Title": "Newchat Agent Registry" }
+    });
+    if (!response.ok) throw new Error(`OpenRouter model catalogue returned HTTP ${response.status}.`);
+    const payload = await response.json() as { data?: Array<{ id?: string; pricing?: { prompt?: string; completion?: string } }> };
+    if (!Array.isArray(payload.data)) throw new Error("OpenRouter returned an invalid model catalogue.");
+    const availableIds = new Set(payload.data.filter(item => {
+      const prompt = Number(item.pricing?.prompt);
+      const completion = Number(item.pricing?.completion);
+      return typeof item.id === "string" && (item.id.endsWith(":free") || (Number.isFinite(prompt) && Number.isFinite(completion) && prompt === 0 && completion === 0));
+    }).map(item => item.id as string));
+    availableIds.add("openrouter/free");
+    const rows = await this.db("model_registry?provider=eq.openrouter&is_free=eq.true&select=id,model_id,enabled");
+    if (!Array.isArray(rows)) throw new Error("Could not load the saved OpenRouter model registry.");
+    let refreshed = 0, disabled = 0;
+    const verifiedAt = new Date().toISOString();
+    for (const row of rows) {
+      const enabled = availableIds.has(row.model_id);
+      if (enabled) refreshed++;
+      else if (row.enabled) disabled++;
+      await this.db(`model_registry?id=eq.${encodeURIComponent(row.id)}`, "PATCH", {
+        enabled, last_verified_at: enabled ? verifiedAt : null, updated_at: verifiedAt
+      });
+    }
+    return { refreshed, available: availableIds.size, disabled };
+  }
+
   private async completeTask(task: Task, run: any, userId: string, model: Model, attempt: number, previousFailure = ""): Promise<{ result: any; artifacts: any[]; duration: number; passed: boolean; approval_pending?: boolean }> {
     const started = Date.now();
     const endpoint = model.provider === "openrouter"
@@ -105,20 +134,26 @@ export class AgentWorkflow extends WorkflowEntrypoint<Env, Params> {
       },
       body: JSON.stringify({
         model: model.model_id,
-        messages: [{ role: "system", content: "Return valid JSON only. Do not fabricate tool execution." }, { role: "user", content: prompt }],
+        messages: [
+          { role: "system", content: "Return one complete JSON object only. Do not fabricate tool execution. If the requested output cannot be produced with the available tools, state that limitation explicitly." },
+          { role: "user", content: prompt }
+        ],
         max_tokens: 6000, temperature: 0.15
       })
     });
-    const payload = await response.json() as any;
-    if (!response.ok) throw new Error(payload?.error?.message || payload?.error || `Model request failed (${response.status}).`);
-    const content = payload?.choices?.[0]?.message?.content;
-    const raw = Array.isArray(content) ? content.map((x: any) => x.text || "").join("") : content;
-    if (typeof raw !== "string") throw new Error("Model returned no task deliverable.");
-    const cleaned = raw.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
-    const start = cleaned.indexOf("{"), end = cleaned.lastIndexOf("}");
-    if (start < 0 || end <= start) throw new Error("Task response was not valid JSON.");
-    const result = JSON.parse(cleaned.slice(start, end + 1));
-    if (typeof result.deliverable !== "string" || !Array.isArray(result.criterion_evidence)) throw new Error("Task response did not include the required evidence structure.");
+    const responseText = await response.text();
+    let payload: any;
+    try { payload = responseText ? JSON.parse(responseText) : {}; }
+    catch { throw new Error(`Provider returned a non-JSON response (HTTP ${response.status}): ${responseText.slice(0, 240)}`); }
+    if (!response.ok) {
+      const detail = typeof payload?.error === "string" ? payload.error : payload?.error?.message;
+      throw new Error(detail || `Model request failed (HTTP ${response.status}).`);
+    }
+    const raw = extractProviderText(payload);
+    const result = parseJsonObject<any>(raw);
+    if (typeof result.deliverable !== "string" || !result.deliverable.trim() || !Array.isArray(result.criterion_evidence)) {
+      throw new Error("Model response must include a non-empty deliverable and criterion evidence.");
+    }
     const limitations = Array.isArray(result.limitations) ? result.limitations.filter((x: unknown) => typeof x === "string").slice(0, 20) : [];
     const artifacts = Array.isArray(result.artifacts) ? result.artifacts.filter((x: any) => x && typeof x.name === "string" && typeof x.content === "string").slice(0, 20) : [];
     let execution: any = null;
@@ -247,7 +282,7 @@ export class AgentWorkflow extends WorkflowEntrypoint<Env, Params> {
     // All execution candidates are explicitly free. Paid models are intentionally excluded until
     // the approval workflow and real cost accounting are enabled.
     const strategy = run.strategy || "balanced";
-    const sortedModels = [...freeModels].sort((a, b) => {
+    const sortedModels = orderModelFallbacks([...freeModels].sort((a, b) => {
       const am = metricFor(a), bm = metricFor(b);
       const aq = am?.quality_score ?? 0, bq = bm?.quality_score ?? 0;
       const al = am?.avg_latency_ms ?? 120000, bl = bm?.avg_latency_ms ?? 120000;
@@ -256,7 +291,7 @@ export class AgentWorkflow extends WorkflowEntrypoint<Env, Params> {
       const aScore = aq * 0.75 + (1 / (1 + al / 30000)) * 0.25;
       const bScore = bq * 0.75 + (1 / (1 + bl / 30000)) * 0.25;
       return (bScore - aScore) || a.priority - b.priority;
-    });
+    }), "general");
 
     for (const task of tasks) {
       if (task.status === "completed" || task.status === "skipped") continue;
@@ -275,8 +310,8 @@ export class AgentWorkflow extends WorkflowEntrypoint<Env, Params> {
       let lastFailure = "";
       const maxAttempts = Math.max(1, Math.min(10, Number(run.max_attempts) || 3));
       for (let attempt = Math.max(1, (task.attempts || 0) + 1); attempt <= maxAttempts && !success; attempt++) {
-        const candidates = sortedModels.filter(m => (m.capabilities || []).includes(task.task_type || "general"));
-        const pool = candidates.length ? candidates : sortedModels;
+        const pool = orderModelFallbacks(sortedModels, task.task_type || "general");
+        if (!pool.length) throw new Error("No eligible free AI models are configured for this task.");
         const model = pool[(attempt - 1) % pool.length];
         const stepName = `task-${task.id}-attempt-${attempt}`.slice(0, 240);
         const attemptStarted = Date.now();
