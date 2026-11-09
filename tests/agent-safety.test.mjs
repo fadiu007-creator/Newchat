@@ -128,7 +128,7 @@ test("Worker source is complete and exposes the deployed build identity", () => 
 
 
 test("provider response parser handles string and multipart content and reports empty responses", () => {
-  assert.equal(extractProviderText({ choices: [{ message: { content: "  {\\"ok\\":true}  " } }] }), '{"ok":true}');
+  assert.equal(extractProviderText({ choices: [{ message: { content: '  {"ok":true}  ' } }] }), '{"ok":true}');
   assert.equal(extractProviderText({ choices: [{ message: { content: [{ type: "text", text: "hello " }, { type: "text", text: "world" }] } }] }), "hello world");
   assert.throws(() => extractProviderText({ choices: [{ finish_reason: "length", message: { content: null } }] }), /finish_reason=length/);
 });
