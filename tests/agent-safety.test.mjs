@@ -187,3 +187,13 @@ test("agent execution contains a real model catalogue refresh and supports retry
   assert.match(deployWorkflow, /const requiredConfiguration = \["github", "supabase", "openrouter"\]/);
   assert.doesNotMatch(deployWorkflow, /const requiredConfiguration = .*edenai/);
 });
+
+test("agent fallback handles token truncation without duplicate provider retries and persists terminal state", () => {
+  assert.match(workflow, /max_tokens: 12000/);
+  assert.match(workflow, /reasoning: \{ effort: "low", exclude: true \}/);
+  assert.match(workflow, /const boundedAttempts = Math\.min\(10, Math\.max\(configuredAttempts, Math\.min\(sortedModels\.length, 6\)\)\)/);
+  assert.match(workflow, /retries: \{ limit: 0 \}/);
+  assert.match(workflow, /status: "blocked", last_error: message\.slice\(0, 1000\), finished_at:/);
+  assert.match(workflow, /status: "failed", verification_status: "needs_review"/);
+  assert.match(workflow, /actual SVG artifacts with complete valid SVG markup/);
+});
