@@ -1,5 +1,5 @@
 import { executeSandbox, executeGithubOperation, sha256Hex, type GithubOperation } from "./tool-adapters";
-import { extractProviderText, orderModelFallbacks, parseJsonObject } from "./agent-utils";
+import { extractProviderText, orderModelFallbacks, orderTasksByDependencies, parseJsonObject } from "./agent-utils";
 import { WorkflowEntrypoint, WorkflowStep } from "cloudflare:workers";
 import type { WorkflowEvent } from "cloudflare:workers";
 
@@ -116,6 +116,7 @@ export class AgentWorkflow extends WorkflowEntrypoint<Env, Params> {
     const prompt = [
       "You are executing one bounded task inside Newchat. Produce a concrete deliverable, not a plan.",
       "Be explicit about assumptions and limitations. Never claim an external action, deployment, test, or file write happened unless a connected tool actually performed it.",
+      "For visual mockup tasks, do not claim an image exists based on a written description. When suitable, create real editable SVG vector files as artifacts (mime_type image/svg+xml, complete <svg>...</svg> content) for each required view. If the request requires raster image generation or animation tools that are unavailable, state that limitation and leave the related criterion unmet.",
       "Return JSON only: {\"deliverable\":\"...\",\"artifacts\":[{\"name\":\"...\",\"mime_type\":\"text/plain\",\"content\":\"...\"}],\"criterion_evidence\":[{\"criterion\":\"...\",\"evidence\":\"...\",\"status\":\"met|not_met|not_verifiable\"}],\"limitations\":[\"...\"],\"execution\":{\"language\":\"javascript|typescript|python\",\"files\":[{\"path\":\"relative/path\",\"content\":\"...\"}],\"argv\":[\"node\",\"--test\"],\"timeout_ms\":60000},\"github_operations\":[{\"action\":\"read_file|list_directory|create_branch|upsert_file|create_pull_request|merge_pull_request|verify_commit\",\"repository\":\"owner/repository\"}]}. For coding tasks execution is mandatory.",
       "For coding tasks, include complete runnable source files in execution.files and a direct argv command. Supported commands start with node, npm or python3. The GitHub Actions sandbox is an ephemeral container with network disabled and no application secrets. Never claim success unless the returned receipt confirms it. For GitHub writes, propose the exact intended operation; the owner must approve it before execution.",
       "When repository access is needed, return up to four github_operations as an array of exact operation objects. Read operations are read_file {action,repository,path,branch}, list_directory {action,repository,path,branch}, or verify_commit {action,repository,branch}. Write operations are create_branch {action,repository,branch,base,base_sha}, upsert_file {action,repository,path,branch,content,commit_message}, create_pull_request {action,repository,title,body,branch,base}, or merge_pull_request {action,repository,pull_number}. Use only repositories enabled in the user allowlist. Never say a write succeeded before its result is returned.",
@@ -252,7 +253,7 @@ export class AgentWorkflow extends WorkflowEntrypoint<Env, Params> {
 
     const tasks = await step.do("load-agent-tasks", async () => {
       const rows = await this.db(`agent_tasks?run_id=eq.${encodeURIComponent(runId)}&user_id=eq.${encodeURIComponent(userId)}&select=*&order=position.asc`);
-      return rows as Task[];
+      return orderTasksByDependencies(rows as Task[]);
     });
     await step.do("refresh-openrouter-free-model-registry", async () => {
       try {

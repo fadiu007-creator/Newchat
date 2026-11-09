@@ -147,6 +147,11 @@ test("agent plans are executed in dependency order even when planner returns tas
     { key: "setup", title: "Setup", description: "", acceptance_criteria: ["ready"], depends_on: [] }
   ]);
   assert.deepEqual(ordered.map(task => task.key), ["setup", "build", "finish"]);
+  const persistedOrder = orderTasksByDependencies([
+    { task_key: "child", title: "Child", dependencies: ["parent"] },
+    { task_key: "parent", title: "Parent", dependencies: [] }
+  ]);
+  assert.deepEqual(persistedOrder.map(task => task.task_key), ["parent", "child"]);
   assert.throws(() => orderTasksByDependencies([
     { key: "a", title: "A", description: "", acceptance_criteria: ["a"], depends_on: ["missing"] }
   ]), /unknown dependency/);
@@ -169,6 +174,8 @@ test("agent execution contains a real model catalogue refresh and supports retry
   assert.match(workflow, /private async refreshOpenRouterFreeRegistry/);
   assert.match(workflow, /extractProviderText\(payload\)/);
   assert.match(workflow, /orderModelFallbacks\(sortedModels, task\.task_type/);
+  assert.match(workflow, /orderTasksByDependencies\(rows as Task\[\]\)/);
+  assert.match(workflow, /mime_type image\/svg\+xml/);
   assert.match(worker, /orderTasksByDependencies\(tasks\)/);
   assert.match(worker, /select=id,task_key,status,dependencies/);
   assert.match(worker, /attempts: 0, verification_status: "not_started"/);

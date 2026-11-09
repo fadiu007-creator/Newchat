@@ -1,9 +1,8 @@
 export type AgentTaskPlan = {
-  key: string;
-  title: string;
-  description: string;
-  acceptance_criteria: string[];
-  depends_on: string[];
+  key?: string;
+  task_key?: string;
+  depends_on?: string[];
+  dependencies?: string[];
 };
 
 export function extractProviderText(payload: any): string {
@@ -56,22 +55,25 @@ export function parseJsonObject<T = any>(raw: string): T {
 }
 
 export function orderTasksByDependencies<T extends AgentTaskPlan>(tasks: T[]): T[] {
-  const byKey = new Map(tasks.map(task => [task.key, task]));
-  if (byKey.size !== tasks.length) throw new Error("Agent plan contains duplicate task keys.");
+  const keyOf = (task: T) => task.key || task.task_key || "";
+  const dependenciesOf = (task: T) => task.depends_on || task.dependencies || [];
+  const byKey = new Map(tasks.map(task => [keyOf(task), task]));
+  if (byKey.size !== tasks.length || tasks.some(task => !keyOf(task))) throw new Error("Agent plan contains duplicate or empty task keys.");
   const visiting = new Set<string>();
   const visited = new Set<string>();
   const ordered: T[] = [];
   const visit = (task: T) => {
-    if (visiting.has(task.key)) throw new Error("Agent plan contains a dependency cycle.");
-    if (visited.has(task.key)) return;
-    visiting.add(task.key);
-    for (const key of task.depends_on || []) {
-      const dependency = byKey.get(key);
-      if (!dependency) throw new Error(`Agent plan references unknown dependency: ${key}`);
+    const key = keyOf(task);
+    if (visiting.has(key)) throw new Error("Agent plan contains a dependency cycle.");
+    if (visited.has(key)) return;
+    visiting.add(key);
+    for (const dependencyKey of dependenciesOf(task)) {
+      const dependency = byKey.get(dependencyKey);
+      if (!dependency) throw new Error(`Agent plan references unknown dependency: ${dependencyKey}`);
       visit(dependency);
     }
-    visiting.delete(task.key);
-    visited.add(task.key);
+    visiting.delete(key);
+    visited.add(key);
     ordered.push(task);
   };
   for (const task of tasks) visit(task);
