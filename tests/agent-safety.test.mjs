@@ -170,7 +170,13 @@ test("agent execution contains a real model catalogue refresh and supports retry
   assert.match(workflow, /extractProviderText\(payload\)/);
   assert.match(workflow, /orderModelFallbacks\(sortedModels, task\.task_type/);
   assert.match(worker, /orderTasksByDependencies\(tasks\)/);
-  assert.match(worker, /agent_tasks\?run_id=.*select=id,task_key,status,dependencies/);
+  assert.match(worker, /select=id,task_key,status,dependencies/);
   assert.match(worker, /attempts: 0, verification_status: "not_started"/);
   assert.match(worker, /\["planned", "blocked", "failed"\]/);
+  assert.match(worker, /status=eq\.\$\{encodeURIComponent\(run\.status\)\}/);
+  assert.match(worker, /status: ready \? "ready" : "pending"/);
+  assert.match(worker, /status=eq\.pending/);
+  assert.match(worker, /cost_usd: 0, metadata: \{ reserved: false/);
+  assert.match(deployWorkflow, /const requiredConfiguration = \["github", "supabase", "openrouter"\]/);
+  assert.doesNotMatch(deployWorkflow, /const requiredConfiguration = .*edenai/);
 });
