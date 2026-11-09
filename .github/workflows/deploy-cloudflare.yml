@@ -32,18 +32,38 @@ jobs:
           EXPECTED_SHA: ${{ github.sha }}
           HEALTH_URL: https://newchat.shqiptare.workers.dev/api/health
         run: |
-          set -euo pipefail
-          curl --fail --silent --show-error --retry 24 --retry-delay 5 --retry-connrefused "$HEALTH_URL" -o /tmp/newchat-health.json
-          node --input-type=module -e '
-            import fs from "node:fs";
-            const health = JSON.parse(fs.readFileSync("/tmp/newchat-health.json", "utf8"));
-            if (health.build_sha !== process.env.EXPECTED_SHA) {
-              console.error("Live build SHA mismatch", { expected: process.env.EXPECTED_SHA, actual: health.build_sha });
-              process.exit(1);
+          node --input-type=module <<'NODE'
+          const required = ["chat", "agentPlanning", "agentExecution", "sandboxExecution", "githubOperations", "independentGithubVerification", "paidModelApproval"];
+          const deadline = Date.now() + 120_000;
+          let lastHealth = null;
+          let lastError = null;
+          while (Date.now() < deadline) {
+            try {
+              const response = await fetch(process.env.HEALTH_URL, { cache: "no-store" });
+              if (!response.ok) throw new Error(`Health endpoint returned HTTP ${response.status}`);
+              const health = await response.json();
+              lastHealth = health;
+              if (health.build_sha !== process.env.EXPECTED_SHA) {
+                lastError = new Error(`Live build SHA mismatch: expected ${process.env.EXPECTED_SHA}, got ${health.build_sha}`);
+              } else if (health.ok !== true) {
+                lastError = new Error("Health endpoint did not report ok=true.");
+              } else {
+                const missing = required.filter(name => health.capabilities?.[name] !== true);
+                if (missing.length === 0) {
+                  console.log("Verified live deployment SHA and required runtime capabilities:", health.build_sha);
+                  process.exit(0);
+                }
+                lastError = new Error("Production Worker is not ready; missing capabilities: " + missing.join(", "));
+              }
+            } catch (error) {
+              lastError = error;
             }
-            if (health.ok !== true) throw new Error("Health endpoint did not report ok=true.");
-            const required = ["chat", "agentPlanning", "agentExecution", "sandboxExecution", "githubOperations", "independentGithubVerification", "paidModelApproval"];
-            const missing = required.filter(name => health.capabilities?.[name] !== true);
-            if (missing.length) throw new Error("Production Worker is missing required runtime capabilities: " + missing.join(", "));
-            console.log("Verified live deployment SHA and required capabilities:", health.build_sha);
-          '
+            await new Promise(resolve => setTimeout(resolve, 5000));
+          }
+          console.error("Independent production verification timed out.", {
+            expected_sha: process.env.EXPECTED_SHA,
+            last_health: lastHealth,
+            last_error: String(lastError)
+          });
+          process.exit(1);
+          NODE
