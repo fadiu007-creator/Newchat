@@ -22,7 +22,7 @@ export function extractProviderText(payload: any): string {
   }
   const refusal = typeof message.refusal === "string" ? message.refusal : "";
   const finish = typeof choice?.finish_reason === "string" ? choice.finish_reason : "unknown";
-  const providerError = typeof payload?.error?.message === "string" ? payload.error.message : "";
+  const providerError = typeof payload?.error === "string" ? payload.error : typeof payload?.error?.message === "string" ? payload.error.message : "";
   throw new Error(
     providerError ||
     (refusal ? `Provider refused the task: ${refusal.slice(0, 300)}` :
