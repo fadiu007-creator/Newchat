@@ -14,8 +14,9 @@ test("Cloudflare deployment never supplies an empty or destructive secrets file"
   assert.match(workflow, /wrangler\s+secret\s+bulk\s+\/tmp\/newchat-secrets\.json/);
   assert.match(workflow, /OPENROUTER_API_KEY/);
   assert.match(workflow, /SUPABASE_SERVICE_ROLE_KEY/);
-  assert.match(workflow, /GITHUB_APP_TOKEN/);
-  assert.match(workflow, /GITHUB_APP_PRIVATE_KEY/);
+  assert.match(workflow, /secrets\.NEWCHAT_GITHUB_TOKEN/);
+  assert.doesNotMatch(workflow, /secrets\.GITHUB_[A-Z0-9_]+/);
+  assert.match(workflow, /secrets\.NEWCHAT_GITHUB_APP_PRIVATE_KEY/);
   assert.match(workflow, /EDENAI_API_KEY/);
   assert.match(workflow, /Required Cloudflare secrets are missing/);
   assert.match(workflow, /npx wrangler deploy --var APP_COMMIT_SHA:\$\{GITHUB_SHA\}/);
