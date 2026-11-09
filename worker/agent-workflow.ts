@@ -330,7 +330,12 @@ export class AgentWorkflow extends WorkflowEntrypoint<Env, Params> {
             await this.event(runId, userId, "approval_requested", "A GitHub write operation is waiting for your approval.", result.result.approval_pending);
             return { passed: false, result: result.result, approval_pending: true };
           }
-          await this.recordMetric(model, task.task_type || "general", result.duration, result.passed);
+          await this.recordMetric(model, task.task_type || "general", result.duration, result.passed).catch(async error => {
+            await this.event(runId, userId, "model_metric_write_failed", "Task result was retained; model telemetry could not be updated.", {
+              provider: model.provider, model: model.model_id,
+              error: error instanceof Error ? error.message.slice(0, 300) : "Unknown metric write error"
+            }).catch(() => undefined);
+          });
           await this.db("agent_steps", "POST", {
             run_id: runId, task_id: task.id, user_id: userId, attempt, step_type: attempt > 1 ? "repair" : "model",
             provider: model.provider, model: model.model_id, input_summary: task.title,
