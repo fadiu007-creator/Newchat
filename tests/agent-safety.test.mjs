@@ -8,6 +8,7 @@ import {
   selectLatestCheckRuns,
   isCombinedStatusSatisfied
 } from "../worker/tool-adapters.ts";
+import { extractProviderText, orderModelFallbacks, orderTasksByDependencies, parseJsonObject } from "../worker/agent-utils.ts";
 
 const adapters = await readFile(new URL("../worker/tool-adapters.ts", import.meta.url), "utf8");
 const workflow = await readFile(new URL("../worker/agent-workflow.ts", import.meta.url), "utf8");
@@ -123,4 +124,53 @@ test("consequential operations are centrally classified", () => {
 test("Worker source is complete and exposes the deployed build identity", () => {
   assert.equal(worker.includes("truncated — re-run"), false);
   assert.match(worker, /build_sha: env\.APP_COMMIT_SHA/);
+});
+
+
+test("provider response parser handles string and multipart content and reports empty responses", () => {
+  assert.equal(extractProviderText({ choices: [{ message: { content: "  {\\"ok\\":true}  " } }] }), '{"ok":true}');
+  assert.equal(extractProviderText({ choices: [{ message: { content: [{ type: "text", text: "hello " }, { type: "text", text: "world" }] } }] }), "hello world");
+  assert.throws(() => extractProviderText({ choices: [{ finish_reason: "length", message: { content: null } }] }), /finish_reason=length/);
+});
+
+test("JSON extraction handles code fences, nested braces and escaped quotes", () => {
+  const parsed = parseJsonObject('prefix ```json\\n{"text":"a } brace and \\"quote\\"","nested":{"ok":true}}``` suffix');
+  assert.equal(parsed.nested.ok, true);
+  assert.equal(parsed.text, 'a } brace and "quote"');
+  assert.throws(() => parseJsonObject('{"broken":'), /incomplete JSON/);
+});
+
+test("agent plans are executed in dependency order even when planner returns tasks backwards", () => {
+  const ordered = orderTasksByDependencies([
+    { key: "finish", title: "Finish", description: "", acceptance_criteria: ["done"], depends_on: ["build"] },
+    { key: "build", title: "Build", description: "", acceptance_criteria: ["built"], depends_on: ["setup"] },
+    { key: "setup", title: "Setup", description: "", acceptance_criteria: ["ready"], depends_on: [] }
+  ]);
+  assert.deepEqual(ordered.map(task => task.key), ["setup", "build", "finish"]);
+  assert.throws(() => orderTasksByDependencies([
+    { key: "a", title: "A", description: "", acceptance_criteria: ["a"], depends_on: ["missing"] }
+  ]), /unknown dependency/);
+  assert.throws(() => orderTasksByDependencies([
+    { key: "a", title: "A", description: "", acceptance_criteria: ["a"], depends_on: ["b"] },
+    { key: "b", title: "B", description: "", acceptance_criteria: ["b"], depends_on: ["a"] }
+  ]), /dependency cycle/);
+});
+
+test("model fallback exhausts task-specialized models before general free models without duplicates", () => {
+  const pool = orderModelFallbacks([
+    { provider: "openrouter", model_id: "general", capabilities: ["general"] },
+    { provider: "openrouter", model_id: "coder", capabilities: ["coding"] },
+    { provider: "openrouter", model_id: "coder", capabilities: ["coding"] }
+  ], "coding");
+  assert.deepEqual(pool.map(model => model.model_id), ["coder", "general"]);
+});
+
+test("agent execution contains a real model catalogue refresh and supports retrying blocked tasks", () => {
+  assert.match(workflow, /private async refreshOpenRouterFreeRegistry/);
+  assert.match(workflow, /extractProviderText\(payload\)/);
+  assert.match(workflow, /orderModelFallbacks\(sortedModels, task\.task_type/);
+  assert.match(worker, /orderTasksByDependencies\(tasks\)/);
+  assert.match(worker, /agent_tasks\?run_id=.*select=id,task_key,status,dependencies/);
+  assert.match(worker, /attempts: 0, verification_status: "not_started"/);
+  assert.match(worker, /\["planned", "blocked", "failed"\]/);
 });
