@@ -37,6 +37,8 @@ test("sandbox runner uses an ephemeral network-disabled container with resource 
   assert.match(sandboxRunner, /chmodSync\(dirname\(target\), 0o777\)/);
   assert.match(sandboxRunner, /chmodSync\(target, 0o666\)/);
   assert.match(sandboxRunner, /resolve\(resultDir, "receipt\.json"\)/);
+  assert.ok(sandboxRunner.includes('",dst=/workspace"'), "workspace bind mount must use valid Docker --mount syntax");
+  assert.equal(sandboxRunner.includes('",dst=/workspace,rw"'), false, "Docker --mount does not accept the rw field");
 });
 
 test("sandbox validator accepts a bounded JavaScript job", () => {
