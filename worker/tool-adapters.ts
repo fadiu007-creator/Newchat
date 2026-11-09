@@ -218,6 +218,28 @@ export async function githubRequest(env: ToolEnv, repo: string, path: string, me
   return githubApi(env, repo, path, method, body);
 }
 
+export function selectLatestCheckRuns(checkRuns: any[]) {
+  const latest = new Map<string, any>();
+  for (const item of Array.isArray(checkRuns) ? checkRuns : []) {
+    if (!item || item.name === "Newchat sandbox") continue;
+    const key = String(item.app?.slug || item.app?.name || "unknown") + ":" + String(item.name || "unnamed");
+    const current = latest.get(key);
+    const timestamp = Date.parse(item.started_at || item.created_at || "") || 0;
+    const currentTimestamp = current ? (Date.parse(current.started_at || current.created_at || "") || 0) : -1;
+    if (!current || timestamp > currentTimestamp || (timestamp === currentTimestamp && Number(item.id || 0) > Number(current.id || 0))) {
+      latest.set(key, item);
+    }
+  }
+  return [...latest.values()];
+}
+
+export function isCombinedStatusSatisfied(statuses: any, checksPassed: boolean) {
+  // GitHub can report "pending" when no legacy commit-status contexts exist.
+  // In that case the completed check-run results are the authoritative signal.
+  return statuses?.state === "success" ||
+    (Array.isArray(statuses?.statuses) && statuses.statuses.length === 0 && checksPassed);
+}
+
 export async function verifyGitHubCommit(env: ToolEnv, repo: string, ref: string) {
   if (!/^[A-Za-z0-9._/-]{1,200}$/.test(ref) || ref.includes("..")) throw new Error("Invalid Git reference.");
   const commit = await githubApi(env, repo, `/commits/${encodeURIComponent(ref)}`, "GET") as any;
@@ -225,10 +247,10 @@ export async function verifyGitHubCommit(env: ToolEnv, repo: string, ref: string
     githubApi(env, repo, `/commits/${encodeURIComponent(commit.sha)}/status`, "GET"),
     githubApi(env, repo, `/commits/${encodeURIComponent(commit.sha)}/check-runs?filter=all&per_page=100`, "GET")
   ]);
-  const checkRuns = (Array.isArray(checks?.check_runs) ? checks.check_runs : []).filter((item: any) => item.name !== "Newchat sandbox");
+  const checkRuns = selectLatestCheckRuns(checks?.check_runs);
   const checksComplete = checkRuns.length > 0 && checkRuns.every((item: any) => item.status === "completed");
   const checksPassed = checksComplete && checkRuns.every((item: any) => item.conclusion === "success");
-  const statusPassed = statuses?.state === "success";
+  const statusPassed = isCombinedStatusSatisfied(statuses, checksPassed);
   return {
     commit_sha: commit.sha,
     commit_verified: Boolean(commit.sha && commit.commit?.tree?.sha),
