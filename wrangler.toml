@@ -15,14 +15,6 @@ GITHUB_SANDBOX_REPOSITORY = "fadiu007-creator/Newchat"
 SUPABASE_URL = "https://saavqlbwffrwxingbnri.supabase.co"
 SUPABASE_ANON_KEY = "sb_publishable_IruAYNoelmN7N4Q1Hy2HFg_wxw-1zgS"
 
-[secrets]
-required = [
-  "OPENROUTER_API_KEY",
-  "SUPABASE_SERVICE_ROLE_KEY",
-  "GITHUB_APP_ID",
-  "GITHUB_APP_PRIVATE_KEY",
-  "GITHUB_APP_INSTALLATION_ID"
-]
 
 [[workflows]]
 name = "newchat-agent"
