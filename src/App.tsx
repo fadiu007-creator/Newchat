@@ -288,7 +288,7 @@ function AgentWorkspace({ session, onSignIn }: { session: Session | null; onSign
         </article>)}</div>
         <div className="agent-run-controls">
           {plan.status === "planned" && <button className="agent-plan-button" onClick={() => void runAction("start")} disabled={!!busyAction || executionReady === false}>{busyAction === "start" ? "Starting…" : executionReady === false ? "Execution not configured" : "Start execution"}</button>}
-          {(plan.status === "paused" || plan.status === "blocked") && <button className="agent-plan-button" onClick={() => void runAction(plan.status === "blocked" ? "start" : "resume")} disabled={!!busyAction}>{busyAction === "resume" || busyAction === "start" ? "Resuming…" : "Resume"}</button>}
+          {(["paused", "blocked", "failed"].includes(plan.status)) && <button className="agent-plan-button" onClick={() => void runAction(plan.status === "paused" ? "resume" : "start")} disabled={!!busyAction}>{busyAction === "resume" || busyAction === "start" ? "Retrying…" : plan.status === "paused" ? "Resume" : "Retry failed tasks"}</button>}
           {["queued", "running"].includes(plan.status) && <button className="agent-secondary-button" onClick={() => void runAction("pause")} disabled={!!busyAction}>{busyAction === "pause" ? "Pausing…" : "Pause"}</button>}
           {["queued", "running", "paused"].includes(plan.status) && <button className="agent-danger-button" onClick={() => void runAction("cancel")} disabled={!!busyAction}>{busyAction === "cancel" ? "Stopping…" : "Stop"}</button>}
           <span className="agent-status">{plan.status}</span>

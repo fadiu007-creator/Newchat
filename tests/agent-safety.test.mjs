@@ -212,4 +212,6 @@ test("agent status polling reconciles terminal Cloudflare Workflow states into d
   assert.match(worker, /workflow_status_reconciled/);
   assert.match(app, /\/api\/agent\/status\?run_id=/);
   assert.match(app, /workflowResult\?\.run\?\.status \|\| runData\.status/);
+  assert.match(app, /\["paused", "blocked", "failed"\]\.includes\(plan\.status\)/);
+  assert.match(app, /Retry failed tasks/);
 });
