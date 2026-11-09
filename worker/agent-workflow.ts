@@ -243,6 +243,7 @@ export class AgentWorkflow extends WorkflowEntrypoint<Env, Params> {
       return rows[0];
     });
     const start = Date.now();
+    try {
     await step.do("mark-run-running", async () => {
       await this.db(`agent_runs?id=eq.${encodeURIComponent(runId)}&user_id=eq.${encodeURIComponent(userId)}`, "PATCH", {
         status: "running", started_at: run.started_at || new Date().toISOString(),
@@ -298,7 +299,7 @@ export class AgentWorkflow extends WorkflowEntrypoint<Env, Params> {
     for (const task of tasks) {
       if (task.status === "completed" || task.status === "skipped") continue;
       if (Date.now() - start > run.max_runtime_minutes * 60_000) {
-        await this.db(`agent_runs?id=eq.${encodeURIComponent(runId)}&user_id=eq.${encodeURIComponent(userId)}`, "PATCH", { status: "blocked", last_error: "Maximum runtime reached." });
+        await this.db(`agent_runs?id=eq.${encodeURIComponent(runId)}&user_id=eq.${encodeURIComponent(userId)}`, "PATCH", { status: "blocked", last_error: "Maximum runtime reached.", finished_at: new Date().toISOString(), heartbeat_at: new Date().toISOString() });
         await this.event(runId, userId, "runtime_limit", "Run paused because its maximum runtime was reached.");
         return { status: "blocked", reason: "runtime_limit" };
       }
@@ -310,7 +311,6 @@ export class AgentWorkflow extends WorkflowEntrypoint<Env, Params> {
       }
       let success = false;
       let lastFailure = "";
-      const maxAttempts = Math.max(1, Math.min(10, Number(run.max_attempts) || 3));
       const configuredAttempts = Math.max(1, Math.min(10, Number(run.max_attempts) || 3));
       const boundedAttempts = Math.min(10, Math.max(configuredAttempts, Math.min(sortedModels.length, 6)));
       for (let attempt = Math.max(1, (task.attempts || 0) + 1); attempt <= boundedAttempts && !success; attempt++) {
@@ -354,8 +354,8 @@ export class AgentWorkflow extends WorkflowEntrypoint<Env, Params> {
             });
           }
           await this.db(`agent_tasks?id=eq.${encodeURIComponent(task.id)}&user_id=eq.${encodeURIComponent(userId)}`, "PATCH", {
-            status: result.passed ? "completed" : (attempt === maxAttempts ? "failed" : "ready"),
-            verification_status: result.passed ? "passed" : (attempt === maxAttempts ? "needs_review" : "failed"),
+            status: result.passed ? "completed" : (attempt === boundedAttempts ? "failed" : "ready"),
+            verification_status: result.passed ? "passed" : (attempt === boundedAttempts ? "needs_review" : "failed"),
             result: result.result, evidence: result.result.criterion_evidence,
             error: result.passed ? null : "One or more acceptance criteria were not evidenced."
           });
@@ -368,8 +368,8 @@ export class AgentWorkflow extends WorkflowEntrypoint<Env, Params> {
           lastFailure = error instanceof Error ? error.message : "Model execution failed.";
           await this.recordMetric(model, task.task_type || "general", Date.now() - attemptStarted, false).catch(() => undefined);
           await this.db(`agent_tasks?id=eq.${encodeURIComponent(task.id)}&user_id=eq.${encodeURIComponent(userId)}`, "PATCH", {
-            status: attempt === maxAttempts ? "failed" : "ready",
-            verification_status: attempt === maxAttempts ? "needs_review" : "failed",
+            status: attempt === boundedAttempts ? "failed" : "ready",
+            verification_status: attempt === boundedAttempts ? "needs_review" : "failed",
             attempts: attempt, assigned_provider: model.provider, assigned_model: model.model_id,
             error: lastFailure.slice(0, 1000)
           }).catch(() => undefined);
@@ -377,7 +377,7 @@ export class AgentWorkflow extends WorkflowEntrypoint<Env, Params> {
             run_id: runId, task_id: task.id, user_id: userId, attempt, step_type: "model",
             provider: model.provider, model: model.model_id, input_summary: task.title,
             output_summary: lastFailure.slice(0, 1000), status: "failed",
-            duration_ms: 0, cost_usd: 0, metadata: { fallback_attempt: attempt < maxAttempts }
+            duration_ms: 0, cost_usd: 0, metadata: { fallback_attempt: attempt < boundedAttempts }
           }).catch(() => undefined);
           await this.event(runId, userId, "model_fallback", `Model failed; trying the next eligible free model for: ${task.title}`, {
             task_id: task.id, attempt, provider: model.provider, model: model.model_id, error: lastFailure
@@ -390,7 +390,7 @@ export class AgentWorkflow extends WorkflowEntrypoint<Env, Params> {
         }
         if ((outcome.result as any)?.approval_pending) return { status: "blocked", reason: "approval_required" };
         success = outcome.passed;
-        task.status = success ? "completed" : (attempt === maxAttempts ? "failed" : "ready");
+        task.status = success ? "completed" : (attempt === boundedAttempts ? "failed" : "ready");
         if (!success) {
           const evidence = Array.isArray(outcome.result?.criterion_evidence) ? JSON.stringify(outcome.result.criterion_evidence).slice(0, 2400) : "No criterion evidence returned.";
           const limits = Array.isArray(outcome.result?.limitations) ? JSON.stringify(outcome.result.limitations).slice(0, 1000) : "";
@@ -419,5 +419,13 @@ export class AgentWorkflow extends WorkflowEntrypoint<Env, Params> {
       return { status: terminal };
     });
     return { status: terminal };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unexpected agent workflow failure.";
+      await this.db(`agent_runs?id=eq.${encodeURIComponent(runId)}&user_id=eq.${encodeURIComponent(userId)}`, "PATCH", {
+        status: "blocked", last_error: message.slice(0, 1000), finished_at: new Date().toISOString(), heartbeat_at: new Date().toISOString()
+      }).catch(() => undefined);
+      await this.event(runId, userId, "execution_failed", "Agent execution stopped because an unexpected workflow error occurred.", { error: message.slice(0, 1000) }).catch(() => undefined);
+      return { status: "blocked", reason: "execution_error", error: message.slice(0, 300) };
+    }
   }
 }
