@@ -25,7 +25,9 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           GITHUB_SHA: ${{ github.sha }}
-        run: npx wrangler deploy --var APP_COMMIT_SHA:${GITHUB_SHA}
+        run: |
+          printf '{}' > /tmp/newchat-preserve-secrets.json
+          npx wrangler deploy --var APP_COMMIT_SHA:${GITHUB_SHA} --secrets-file /tmp/newchat-preserve-secrets.json
       - name: Verify the live deployment independently
         env:
           EXPECTED_SHA: ${{ github.sha }}
@@ -41,5 +43,8 @@ jobs:
               process.exit(1);
             }
             if (health.ok !== true) throw new Error("Health endpoint did not report ok=true.");
-            console.log("Verified live deployment SHA:", health.build_sha);
+            const required = ["chat", "agentPlanning", "agentExecution", "sandboxExecution", "githubOperations", "independentGithubVerification", "paidModelApproval"];
+            const missing = required.filter(name => health.capabilities?.[name] !== true);
+            if (missing.length) throw new Error("Production Worker is missing required runtime capabilities: " + missing.join(", "));
+            console.log("Verified live deployment SHA and required capabilities:", health.build_sha);
           '
