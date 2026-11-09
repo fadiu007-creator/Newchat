@@ -202,6 +202,12 @@ async function startAgentExecution(request: Request, env: Env, origin: string): 
       return json({ error: "This run has no readable tasks and cannot be restarted." }, 409, origin);
     }
     const tasks = taskResult.data as Array<{ id: string; task_key: string; status: string; dependencies?: string[] }>;
+    const claim = await supabaseRequest(env, auth.token,
+      `agent_runs?id=eq.${encodeURIComponent(run.id)}&user_id=eq.${encodeURIComponent(auth.userId)}&status=eq.${encodeURIComponent(run.status)}`,
+      "PATCH", { status: "queued", last_error: null, heartbeat_at: new Date().toISOString() });
+    if (!claim.ok || !Array.isArray(claim.data) || !claim.data.length) {
+      return json({ error: "This run was started by another request or its status changed. Refresh the agent workspace." }, 409, origin);
+    }
     for (const task of tasks) {
       if (task.status === "completed" || task.status === "skipped") continue;
       const dependencyKeys = Array.isArray(task.dependencies) ? task.dependencies : [];
@@ -230,6 +236,9 @@ async function startAgentExecution(request: Request, env: Env, origin: string): 
     });
     return json({ run_id: run.id, workflow_id: instance.id, status: "queued", retried_tasks: tasks.filter(task => task.status !== "completed" && task.status !== "skipped").length }, 202, origin);
   } catch (error) {
+    await supabaseRequest(env, auth.token,
+      `agent_runs?id=eq.${encodeURIComponent(run.id)}&user_id=eq.${encodeURIComponent(auth.userId)}&status=eq.queued`,
+      "PATCH", { status: run.status, last_error: error instanceof Error ? error.message.slice(0, 1000) : "Workflow start failed." }).catch(() => undefined);
     return json({ error: error instanceof Error ? error.message : "Could not start durable execution." }, 502, origin);
   }
 }
@@ -250,13 +259,16 @@ async function controlAgentExecution(request: Request, env: Env, origin: string)
     const instance = await env.AGENT_WORKFLOW.get(run.workflow_instance_id);
     if (action === "pause") {
       await instance.pause();
-      await supabaseRequest(env, auth.token, `agent_runs?id=eq.${encodeURIComponent(run.id)}`, "PATCH", { status: "paused", paused_at: new Date().toISOString() });
+      const saved = await supabaseRequest(env, auth.token, `agent_runs?id=eq.${encodeURIComponent(run.id)}&user_id=eq.${encodeURIComponent(auth.userId)}`, "PATCH", { status: "paused", paused_at: new Date().toISOString() });
+      if (!saved.ok) throw new Error("Workflow paused, but the run status could not be saved.");
     } else if (action === "resume") {
       await instance.resume();
-      await supabaseRequest(env, auth.token, `agent_runs?id=eq.${encodeURIComponent(run.id)}`, "PATCH", { status: "queued", paused_at: null });
+      const saved = await supabaseRequest(env, auth.token, `agent_runs?id=eq.${encodeURIComponent(run.id)}&user_id=eq.${encodeURIComponent(auth.userId)}`, "PATCH", { status: "queued", paused_at: null });
+      if (!saved.ok) throw new Error("Workflow resumed, but the run status could not be saved.");
     } else {
       await instance.terminate();
-      await supabaseRequest(env, auth.token, `agent_runs?id=eq.${encodeURIComponent(run.id)}`, "PATCH", { status: "cancelled", finished_at: new Date().toISOString(), cancel_requested_at: new Date().toISOString() });
+      const saved = await supabaseRequest(env, auth.token, `agent_runs?id=eq.${encodeURIComponent(run.id)}&user_id=eq.${encodeURIComponent(auth.userId)}`, "PATCH", { status: "cancelled", finished_at: new Date().toISOString(), cancel_requested_at: new Date().toISOString() });
+      if (!saved.ok) throw new Error("Workflow terminated, but the cancellation status could not be saved.");
     }
     await supabaseRequest(env, auth.token, "agent_events", "POST", { run_id: run.id, user_id: auth.userId, event_type: `execution_${action}d`, message: `Execution ${action} requested by the owner.` });
     return json({ run_id: run.id, status: action === "pause" ? "paused" : action === "resume" ? "queued" : "cancelled" }, 200, origin);
@@ -577,22 +589,26 @@ export default {
         usage?: { prompt_tokens?: number; completion_tokens?: number; cost?: number };
       };
       if (!upstream.ok) {
+        if (paidReservationId) await supabaseServiceRequest(env, "agent_run_spend?id=eq." + encodeURIComponent(paidReservationId), "PATCH", {
+          cost_usd: 0, metadata: { reserved: false, estimated_cost_usd: paidEstimateUsd, provider_error: true }
+        }).catch(() => undefined);
         const detail = typeof result.error === "string" ? result.error : result.error?.message;
         return json({ error: detail || `Provider request failed (${upstream.status}).` }, upstream.status, origin);
       }
       if (paidReservationId) {
-        const actualCost = Number.isFinite(Number(result.usage?.cost)) && Number(result.usage?.cost) >= 0
-          ? Number(result.usage?.cost) : paidEstimateUsd;
+        const hasReportedCost = result.usage?.cost !== undefined && result.usage?.cost !== null &&
+          Number.isFinite(Number(result.usage.cost)) && Number(result.usage.cost) >= 0;
+        const actualCost = hasReportedCost ? Number(result.usage.cost) : paidEstimateUsd;
         await supabaseServiceRequest(env, "agent_run_spend?id=eq." + encodeURIComponent(paidReservationId), "PATCH", {
           cost_usd: actualCost,
           input_tokens: Math.max(0, Math.floor(Number(result.usage?.prompt_tokens) || 0)),
           output_tokens: Math.max(0, Math.floor(Number(result.usage?.completion_tokens) || 0)),
-          metadata: { reserved: false, estimated_cost_usd: paidEstimateUsd, actual_cost_reported: Number.isFinite(Number(result.usage?.cost)) }
+          metadata: { reserved: false, estimated_cost_usd: paidEstimateUsd, actual_cost_reported: hasReportedCost }
         });
       }
-      const content = result.choices?.[0]?.message?.content;
-      const normalized = Array.isArray(content) ? content.map(part => part.text || "").join("") : content;
-      if (typeof normalized !== "string") return json({ error: "Provider returned an unsupported response format." }, 502, origin);
+      let normalized: string;
+      try { normalized = extractProviderText(result); }
+      catch (error) { return json({ error: error instanceof Error ? error.message : "Provider returned an unsupported response format." }, 502, origin); }
       return json({ content: normalized }, 200, origin);
     } catch {
       return json({ error: "Unable to connect to the AI provider. Please try again." }, 502, origin);
