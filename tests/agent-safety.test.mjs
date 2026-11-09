@@ -197,3 +197,10 @@ test("agent fallback handles token truncation without duplicate provider retries
   assert.match(workflow, /status: "failed", verification_status: "needs_review"/);
   assert.match(workflow, /actual SVG artifacts with complete valid SVG markup/);
 });
+
+test("planner classifies web setup, rendering, animation and app functionality as coding work", () => {
+  assert.match(worker, /website\|webpage\|frontend\|backend\|component\|repository\|source code\|script\|function\|render\|rendering\|animation\|functionality\|ui\|ux\|web project/);
+  assert.match(worker, /max_tokens: 4000/);
+  assert.match(worker, /finish_reason === "length"/);
+  assert.match(worker, /editable SVG or HTML\/CSS\/JavaScript artwork/);
+});
