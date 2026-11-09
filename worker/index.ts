@@ -285,9 +285,46 @@ async function getAgentExecutionStatus(request: Request, env: Env, origin: strin
   const result = await supabaseRequest(env, auth.token, `agent_runs?id=eq.${encodeURIComponent(runId)}&select=id,status,workflow_instance_id,total_cost_usd,last_error,updated_at`, "GET");
   if (!result.ok || !Array.isArray(result.data) || !result.data[0]) return json({ error: "Agent run not found." }, 404, origin);
   const run = result.data[0] as { workflow_instance_id?: string; [key: string]: unknown };
-  let workflow: unknown = null;
+  let workflow: { status?: string; error?: { name?: string; message?: string } } | null = null;
   if (run.workflow_instance_id) {
-    try { workflow = await (await env.AGENT_WORKFLOW.get(run.workflow_instance_id)).status(); } catch { workflow = { status: "unavailable" }; }
+    try {
+      workflow = await (await env.AGENT_WORKFLOW.get(run.workflow_instance_id)).status() as typeof workflow;
+      const terminalStatus = workflow?.status;
+      if (["errored", "terminated", "complete"].includes(terminalStatus || "") && ["queued", "running", "paused"].includes(String(result.data[0].status))) {
+        let reconciledStatus: string;
+        let lastError: string | null = null;
+        if (terminalStatus === "errored") {
+          reconciledStatus = "failed";
+          lastError = workflow?.error?.message || workflow?.error?.name || "Cloudflare Workflow terminated with an error.";
+        } else if (terminalStatus === "terminated") {
+          reconciledStatus = "cancelled";
+        } else {
+          const taskResult = await supabaseRequest(env, auth.token,
+            `agent_tasks?run_id=eq.${encodeURIComponent(runId)}&user_id=eq.${encodeURIComponent(auth.userId)}&select=status`, "GET");
+          if (!taskResult.ok || !Array.isArray(taskResult.data)) {
+            reconciledStatus = "failed";
+            lastError = "Workflow completed but task statuses could not be verified.";
+          } else {
+            reconciledStatus = taskResult.data.length > 0 && taskResult.data.every((task: any) => task.status === "completed" || task.status === "skipped")
+              ? "completed" : "blocked";
+            if (reconciledStatus === "blocked") lastError = "Workflow completed with incomplete or failed tasks. Retry the incomplete tasks.";
+          }
+        }
+        const saved = await supabaseRequest(env, auth.token,
+          `agent_runs?id=eq.${encodeURIComponent(runId)}&user_id=eq.${encodeURIComponent(auth.userId)}&status=in.(queued,running,paused)`,
+          "PATCH", { status: reconciledStatus, last_error: lastError, finished_at: new Date().toISOString(), heartbeat_at: new Date().toISOString() });
+        if (saved.ok && Array.isArray(saved.data) && saved.data.length) {
+          result.data[0].status = reconciledStatus;
+          result.data[0].last_error = lastError;
+          result.data[0].finished_at = new Date().toISOString();
+          await supabaseRequest(env, auth.token, "agent_events", "POST", {
+            run_id: runId, user_id: auth.userId, event_type: "workflow_status_reconciled",
+            message: `Workflow ended (${terminalStatus}); saved run status was reconciled to ${reconciledStatus}.`,
+            metadata: { workflow_status: terminalStatus, run_status: reconciledStatus, error: lastError }
+          }).catch(() => undefined);
+        }
+      }
+    } catch { workflow = { status: "unavailable" }; }
   }
   return json({ run: result.data[0], workflow }, 200, origin);
 }
