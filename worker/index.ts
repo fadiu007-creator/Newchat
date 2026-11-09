@@ -294,7 +294,7 @@ async function getAgentExecutionStatus(request: Request, env: Env, origin: strin
 
 function classifyTask(task: { title: string; description: string }): string {
   const text = `${task.title} ${task.description}`.toLowerCase();
-  if (/\b(code|coding|implement|build|develop|program|api|database|schema|test|debug|deploy|software|app)\b/.test(text)) return "coding";
+  if (/\b(code|coding|implement|build|develop|program|api|database|schema|test|debug|deploy|software|app|website|webpage|frontend|backend|component|repository|source code|script|function|render|rendering|animation|functionality|ui|ux|web project)\b/.test(text)) return "coding";
   if (/\b(research|investigate|compare|sources|fact.?check|findings|market|competitor)\b/.test(text)) return "analysis";
   if (/\b(write|draft|document|proposal|email|content|copy|article|guide|report)\b/.test(text)) return "writing";
   if (/\b(analy[sz]e|review|evaluate|audit|strategy|plan|architecture)\b/.test(text)) return "analysis";
@@ -373,7 +373,9 @@ async function createAgentPlan(request: Request, env: Env, origin: string): Prom
     "Keep the plan focused: 2 to 8 tasks for normal goals, up to 10 only when necessary. Tasks should be independently verifiable.",
     "For a requested app, website, or software build, create implementation-first coding tasks with runnable files, real integration steps, and executable tests. Do not substitute a design document or proposal for the requested working product.",
     "Order tasks by their dependencies. Acceptance criteria must describe observable outputs or test results, not model self-assertions.",
-    "Never promise image, video, audio, deployment, or external service outputs unless the corresponding connected tool is available to this agent. Explicitly mark unsupported deliverables as limitations rather than claiming they were created.",
+    "Never promise raster image, video, audio, deployment, or external service outputs unless the corresponding connected tool is available. For visual web deliverables, plan editable SVG or HTML/CSS/JavaScript artwork when suitable; do not describe text as a generated image.",
+    "Classify web project setup, rendering, animation, frontend components, and application functionality as implementation work with runnable source files and tests.",
+    "Keep the plan compact: concise task descriptions and no redundant design-only tasks when the user requested a working application.",
     "Return ONLY valid JSON with this exact shape:",
     '{"summary":"...","success_criteria":["..."],"tasks":[{"key":"stable-kebab-key","title":"...","description":"...","acceptance_criteria":["..."],"depends_on":[]}]}',
     "Each depends_on entry must reference another task key in this plan. Do not create circular dependencies."
@@ -390,8 +392,9 @@ async function createAgentPlan(request: Request, env: Env, origin: string): Prom
       body: JSON.stringify({
         model: "openrouter/free",
         messages: [{ role: "system", content: system }, { role: "user", content: goal }],
-        max_tokens: 2200,
-        temperature: 0.2
+        max_tokens: 4000,
+        temperature: 0.15,
+        reasoning: { effort: "low", exclude: true }
       })
     });
     const responseText = await upstream.text();
@@ -401,6 +404,9 @@ async function createAgentPlan(request: Request, env: Env, origin: string): Prom
     if (!upstream.ok) {
       const detail = typeof result.error === "string" ? result.error : result.error?.message;
       return json({ error: detail || `Planner provider failed (HTTP ${upstream.status}).` }, 502, origin);
+    }
+    if (result?.choices?.[0]?.finish_reason === "length") {
+      return json({ error: "Planner response was truncated by the selected model. Retry with a shorter goal or another free model." }, 502, origin);
     }
     let text: string;
     try { text = extractProviderText(result); }
