@@ -63,7 +63,7 @@ try {
     "--network", "none", "--cpus=1", "--memory=512m", "--memory-swap=512m",
     "--pids-limit=128", "--read-only",
     "--tmpfs", "/tmp:rw,noexec,nosuid,size=64m",
-    "--mount", "type=bind,src=" + workspace + ",dst=/workspace,rw",
+    "--mount", "type=bind,src=" + workspace + ",dst=/workspace",
     ...(existsSync(resolve("node_modules")) ? ["--mount", "type=bind,src=" + resolve("node_modules") + ",dst=/workspace/node_modules,readonly"] : []),
     "--workdir", "/workspace", "--user", "10001:10001", "--env", "HOME=/tmp", "--env", "npm_config_cache=/tmp/npm-cache",
     "--cap-drop=ALL", "--security-opt=no-new-privileges",
