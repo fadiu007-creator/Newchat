@@ -31,7 +31,7 @@ export function extractProviderText(payload: any): string {
 }
 
 export function parseJsonObject<T = any>(raw: string): T {
-  const text = raw.trim().replace(/^```(?:json)?\\s*/i, "").replace(/\\s*```$/, "");
+  const text = raw.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
   const start = text.indexOf("{");
   if (start < 0) throw new Error("Provider response did not contain a JSON object.");
   let depth = 0;
