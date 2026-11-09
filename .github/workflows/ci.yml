@@ -21,6 +21,9 @@ jobs:
         env:
           OPENROUTER_API_KEY: ci-dry-run-placeholder
           SUPABASE_SERVICE_ROLE_KEY: ci-dry-run-placeholder
+          GITHUB_APP_ID: "1"
+          GITHUB_APP_PRIVATE_KEY: "-----BEGIN PRIVATE KEY-----\nY2ktZHJ5LXJ1bg==\n-----END PRIVATE KEY-----"
+          GITHUB_APP_INSTALLATION_ID: "1"
         run: npx wrangler deploy --dry-run
 
   sandbox-integration:
