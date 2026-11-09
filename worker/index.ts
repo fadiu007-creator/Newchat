@@ -302,10 +302,6 @@ function classifyTask(task: { title: string; description: string }): string {
 }
 
 function parsePlan(raw: string): { summary: string; success_criteria: string[]; tasks: Array<{ key: string; title: string; description: string; acceptance_criteria: string[]; depends_on: string[] }> } | null {
-  const cleaned = raw.trim().replace(/^\`\`\`(?:json)?\s*/i, "").replace(/\s*\`\`\`$/, "");
-  const start = cleaned.indexOf("{");
-  const end = cleaned.lastIndexOf("}");
-  if (start < 0 || end <= start) return null;
   try {
     const parsed = parseJsonObject<Record<string, unknown>>(raw);
     if (typeof parsed.summary !== "string" || !Array.isArray(parsed.tasks)) return null;
