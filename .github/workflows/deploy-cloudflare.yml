@@ -25,11 +25,11 @@ jobs:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           EDENAI_API_KEY: ${{ secrets.EDENAI_API_KEY }}
-          GITHUB_APP_TOKEN: ${{ secrets.GITHUB_APP_TOKEN }}
-          GITHUB_APP_ID: ${{ secrets.GITHUB_APP_ID }}
-          GITHUB_APP_PRIVATE_KEY: ${{ secrets.GITHUB_APP_PRIVATE_KEY }}
-          GITHUB_APP_INSTALLATION_ID: ${{ secrets.GITHUB_APP_INSTALLATION_ID }}
-          GITHUB_ALLOWED_REPOSITORIES: ${{ secrets.GITHUB_ALLOWED_REPOSITORIES }}
+          GITHUB_APP_TOKEN: ${{ secrets.NEWCHAT_GITHUB_TOKEN }}
+          GITHUB_APP_ID: ${{ secrets.NEWCHAT_GITHUB_APP_ID }}
+          GITHUB_APP_PRIVATE_KEY: ${{ secrets.NEWCHAT_GITHUB_APP_PRIVATE_KEY }}
+          GITHUB_APP_INSTALLATION_ID: ${{ secrets.NEWCHAT_GITHUB_APP_INSTALLATION_ID }}
+          GITHUB_ALLOWED_REPOSITORIES: ${{ secrets.NEWCHAT_GITHUB_ALLOWED_REPOSITORIES }}
         run: |
           node --input-type=module <<'NODE'
           import fs from "node:fs";
