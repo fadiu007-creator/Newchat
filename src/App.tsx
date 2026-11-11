@@ -2,9 +2,9 @@ import { FormEvent, KeyboardEvent, useEffect, useMemo, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { supabase, supabaseConfigured } from "./lib/supabase";
 import {
-  ArrowUp, AudioLines, Bot, Check, ChevronDown, CircleHelp,
-  Download, FilePlus2, Globe2, Menu, MessageSquarePlus, MoreHorizontal,
-  PanelLeftClose, Pencil, Plus, Search, Settings2, Sparkles, SquarePen, Trash2, X
+  ArrowUp, Bot, Check, ChevronDown, Download, Globe2, Menu,
+  MessageSquarePlus, MoreHorizontal, PanelLeftClose, Pencil, Search,
+  Settings2, Sparkles, SquarePen, Trash2, X
 } from "lucide-react";
 
 type Provider = "openrouter" | "edenai";
@@ -60,7 +60,6 @@ const newConversation = (): Conversation => ({
 function AgentWorkspace({ session, onSignIn }: { session: Session | null; onSignIn: () => void }) {
   const [goal, setGoal] = useState("");
   const [strategy, setStrategy] = useState<"balanced" | "best_quality" | "free_first">("balanced");
-  const [budget, setBudget] = useState("0");
   const [planning, setPlanning] = useState(false);
   const [plan, setPlan] = useState<AgentPlan | null>(null);
   const [error, setError] = useState("");
@@ -211,14 +210,12 @@ function AgentWorkspace({ session, onSignIn }: { session: Session | null; onSign
     event.preventDefault();
     if (!session) { onSignIn(); return; }
     if (goal.trim().length < 3 || planning) return;
-    const spend = Number(budget);
-    if (!Number.isFinite(spend) || spend < 0 || spend > 1000) { setError("Enter a budget between $0 and $1,000."); return; }
     setPlanning(true); setError(""); setPlan(null);
     try {
       const response = await fetch("/api/agent/plan", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: "Bearer " + session.access_token },
-        body: JSON.stringify({ goal: goal.trim(), strategy, max_budget_usd: spend, max_runtime_minutes: 30, max_attempts: 3 })
+        body: JSON.stringify({ goal: goal.trim(), strategy, max_runtime_minutes: 30, max_attempts: 3 })
       });
       const data = await response.json().catch(() => ({})) as AgentPlan & { error?: string };
       if (!response.ok) throw new Error(data.error || "Planning failed (HTTP " + response.status + ").");
@@ -238,15 +235,14 @@ function AgentWorkspace({ session, onSignIn }: { session: Session | null; onSign
       </div>
       <form className="agent-goal-form" onSubmit={submit}>
         <textarea value={goal} onChange={e => setGoal(e.target.value)} placeholder="Example: Build and deploy a complete invoicing app with user accounts, a database, tests and a production deployment…" rows={4} maxLength={12000}/>
-        <div className="agent-settings-row">
+        <div className="agent-settings-row" style={{ gridTemplateColumns: "1fr" }}>
           <label>Model strategy<select value={strategy} onChange={e => setStrategy(e.target.value as typeof strategy)}>
-            <option value="balanced">Balanced · cost and quality</option>
+            <option value="balanced">Balanced · quality and response speed</option>
             <option value="free_first">Free models first</option>
             <option value="best_quality">Best quality · rank free models</option>
           </select></label>
-          <label>Maximum spend (USD)<input type="number" min="0" max="1000" step="0.50" value={budget} onChange={e => setBudget(e.target.value)}/></label>
         </div>
-        <p className="agent-strategy-note">The strategy is saved with this run. Agent execution uses free models; paid chat models require a separate approval and are capped at $1 in rolling 24-hour spend.</p>
+        <p className="agent-strategy-note">Autonomous runs use free model routes only; paid models are not used by the agent. Paid chat requests require a separate approval and are capped at $1 in rolling 24-hour spend.</p>
         <div className="agent-form-footer">
           <span><Check size={14}/> No manual model selection · free planning route</span>
           <button type="submit" className="agent-plan-button" disabled={planning || goal.trim().length < 3}>
@@ -317,12 +313,37 @@ export default function App() {
   const [authBusy, setAuthBusy] = useState(false);
   const [authError, setAuthError] = useState("");
   const [historyLoaded, setHistoryLoaded] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [spend24h, setSpend24h] = useState<number | null>(null);
+  const [spendLoading, setSpendLoading] = useState(false);
+  const [settingsError, setSettingsError] = useState("");
   const [workspaceMode, setWorkspaceMode] = useState<"agent" | "chat">("agent");
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const active = conversations.find(c => c.id === activeId) ?? conversations[0];
   const selectedModel = modelOptions.find(m => m.model === active.model && m.provider === active.provider) ?? modelOptions[0];
   const grouped = useMemo(() => conversations.filter(c => c.messages.length > 0 && c.title.toLowerCase().includes(searchTerm.toLowerCase())), [conversations, searchTerm]);
+
+  useEffect(() => {
+    if (!settingsOpen) return;
+    if (!supabase || !session) { setSpend24h(null); setSpendLoading(false); return; }
+    let cancelled = false;
+    setSpendLoading(true);
+    setSettingsError("");
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    void supabase.from("agent_run_spend").select("cost_usd").gte("created_at", since).then(({ data, error }) => {
+      if (cancelled) return;
+      if (error) {
+        setSpend24h(null);
+        setSettingsError("Usage data could not be loaded: " + error.message);
+      } else {
+        setSpend24h((data || []).reduce((sum, row) => sum + Math.max(0, Number(row.cost_usd) || 0), 0));
+      }
+      setSpendLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [settingsOpen, session?.user.id]);
+
   useEffect(() => {
     if (!supabase) return;
     void supabase.auth.getSession().then(
@@ -468,6 +489,7 @@ export default function App() {
     setActiveId(next.id);
     setPrompt("");
     setNotice("");
+    setWorkspaceMode("chat");
   }
 
   async function sendMessage(text = prompt) {
@@ -559,14 +581,14 @@ export default function App() {
         <div className="sidebar-label">WORKSPACE</div>
         <button className={"nav-item " + (workspaceMode === "agent" ? "active" : "")} onClick={() => setWorkspaceMode("agent")}><Sparkles size={16}/> Agent workspace</button>
         <button className={"nav-item " + (workspaceMode === "chat" ? "active" : "")} onClick={() => setWorkspaceMode("chat")}><MessageSquarePlus size={16}/> Chats</button>
-        <button className="nav-item"><Globe2 size={16}/> Explore models <span className="soon">Soon</span></button>
+        <button className="nav-item" disabled title="Model discovery is not available yet"><Globe2 size={16}/> Explore models <span className="soon">Soon</span></button>
         <div className="history-heading"><span className="sidebar-label">RECENT</span><MoreHorizontal size={16}/></div>
         <div className="history-list">
           {grouped.map(c => <div key={c.id} className={`history-row ${c.id === activeId ? "selected" : ""}`}><button className="history-item" onClick={() => setActiveId(c.id)}>{c.title}</button><div className="history-actions"><button title="Rename" aria-label="Rename conversation" onClick={() => renameConversation(c.id)}><Pencil size={12}/></button><button title="Export Markdown" aria-label="Export conversation" onClick={() => exportConversation(c)}><Download size={12}/></button><button title="Delete" aria-label="Delete conversation" onClick={() => void deleteConversation(c.id)}><Trash2 size={12}/></button></div></div>)}
           {grouped.length === 0 && <div className="empty-history">{searchTerm ? "No matching conversations." : "Your conversations will appear here."}</div>}
         </div>
         <div className="sidebar-bottom">
-          <button className="nav-item"><Settings2 size={16}/> Settings</button>
+          <button className="nav-item" onClick={() => setSettingsOpen(true)}><Settings2 size={16}/> Settings</button>
           <div className="profile-row"><div className="avatar">{session ? (session.user.email?.[0]?.toUpperCase() || "U") : "N"}</div><div><strong>{session?.user.email || "Guest workspace"}</strong><small>{session ? "Signed in" : "Not signed in"}</small></div>{session ? <button className="profile-action" onClick={() => void signOut()}>Sign out</button> : <button className="profile-action" onClick={() => setAuthOpen(true)}>Sign in</button>}</div>
         </div>
       </aside>
@@ -595,7 +617,7 @@ export default function App() {
             </div>}
             {workspaceMode === "agent" && <div className="agent-topbar-title"><Sparkles size={16}/> Autonomous agent</div>}
           </div>
-          <div className="topbar-actions"><span className="connection-pill"><span className={session ? "connected" : ""}/>{session ? "Signed in" : "Sign in to sync"}</span><button className="icon-button" aria-label="Help"><CircleHelp size={18}/></button></div>
+          <div className="topbar-actions"><span className="connection-pill"><span className={session ? "connected" : ""}/>{session ? "Signed in" : "Sign in to sync"}</span></div>
         </header>
 
         {workspaceMode === "agent" ? <AgentWorkspace session={session} onSignIn={() => setAuthOpen(true)}/> : (
@@ -627,13 +649,46 @@ export default function App() {
           <form className="composer" onSubmit={onSubmit}>
             <textarea value={prompt} onChange={e => setPrompt(e.target.value)} onKeyDown={onKeyDown} placeholder="Message Newchat..." rows={2} />
             <div className="composer-toolbar">
-              <div className="composer-tools"><button type="button" className="tool-button" title="Attach file (coming soon)"><Plus size={17}/></button><button type="button" className="tool-button" title="Attach file (coming soon)"><FilePlus2 size={16}/></button><span className="tool-divider"/><span className="provider-caption">{selectedModel.maker}</span></div>
-              <div className="composer-actions"><button type="button" className="tool-button" title="Voice (coming soon)"><AudioLines size={17}/></button><button type="submit" className="send-button" disabled={!prompt.trim() || loading} aria-label="Send message">{loading ? <span className="spinner"/> : <ArrowUp size={17}/>}</button></div>
+              <div className="composer-tools"><span className="provider-caption">{selectedModel.maker}</span></div>
+              <div className="composer-actions"><button type="submit" className="send-button" disabled={!prompt.trim() || loading} aria-label="Send message">{loading ? <span className="spinner"/> : <ArrowUp size={17}/>}</button></div>
             </div>
           </form>
           <div className="disclaimer">Newchat can make mistakes. Verify important information.</div>
         </div>}
       </main>
+      {settingsOpen && <div className="auth-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setSettingsOpen(false); }}>
+        <section className="settings-card" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+          <button className="auth-close" onClick={() => setSettingsOpen(false)} aria-label="Close settings"><X size={18}/></button>
+          <div className="welcome-icon"><Settings2 size={21}/></div>
+          <h2 id="settings-title">Settings</h2>
+          <p>Account, providers and usage limits</p>
+          <div className="settings-section">
+            <span>ACCOUNT</span>
+            <strong>{session?.user.email || "Guest workspace"}</strong>
+            <small>{session ? "Your conversations and agent runs are saved to your account." : "Sign in to sync conversations and view account usage."}</small>
+            {!session && <button className="settings-action" onClick={() => { setSettingsOpen(false); setAuthOpen(true); }}>Sign in</button>}
+            {session && <button className="settings-action" onClick={() => { setSettingsOpen(false); void signOut(); }}>Sign out</button>}
+          </div>
+          <div className="settings-section">
+            <span>PAID MODEL USAGE · ROLLING 24 HOURS</span>
+            <strong>{spendLoading ? "Loading usage…" : spend24h === null ? "Usage unavailable" : "$" + spend24h.toFixed(6) + " / $1.00"}</strong>
+            <small>The $1.00 limit is enforced server-side before each paid OpenRouter chat request. Provider-reported failures release the reservation; an unconfirmed network failure keeps the conservative estimate reserved.</small>
+            {spend24h !== null && <div className="usage-track"><span style={{ width: Math.min(100, Math.max(0, spend24h * 100)) + "%" }}/></div>}
+          </div>
+          <div className="settings-section">
+            <span>AI PROVIDERS</span>
+            <strong>OpenRouter and Eden AI</strong>
+            <small>Provider credentials are managed securely on the Newchat Worker. Select a model from Chats to choose a provider.</small>
+          </div>
+          <div className="settings-section">
+            <span>PLAN</span>
+            <strong>Free workspace</strong>
+            <small>No recurring subscription is configured. Free model routes are available; paid chat models require approval per request.</small>
+          </div>
+          {settingsError && <div className="auth-error">{settingsError}</div>}
+          <button className="settings-done" onClick={() => setSettingsOpen(false)}>Done</button>
+        </section>
+      </div>}
       {authOpen && <div className="auth-backdrop" role="presentation" onMouseDown={e => { if (e.target === e.currentTarget) setAuthOpen(false); }}>
         <section className="auth-card" role="dialog" aria-modal="true" aria-labelledby="auth-title">
           <button className="auth-close" onClick={() => setAuthOpen(false)} aria-label="Close"><X size={18}/></button>

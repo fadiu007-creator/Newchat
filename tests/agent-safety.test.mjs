@@ -215,3 +215,18 @@ test("agent status polling reconciles terminal Cloudflare Workflow states into d
   assert.match(app, /\["paused", "blocked", "failed"\]\.includes\(plan\.status\)/);
   assert.match(app, /Retry failed tasks/);
 });
+
+
+test("autonomous runs cannot configure a paid spend budget and the UI does not expose a no-op budget field", () => {
+  assert.match(worker, /const budget = 0;/);
+  assert.doesNotMatch(worker, /body\.max_budget_usd/);
+  assert.doesNotMatch(app, /Maximum spend \(USD\)/);
+  assert.match(app, /Autonomous runs use free model routes only/);
+});
+
+test("settings opens an account and rolling paid-usage panel; inert chat tools are not rendered", () => {
+  assert.match(app, /onClick=\{\(\) => setSettingsOpen\(true\)\}/);
+  assert.match(app, /agent_run_spend/);
+  assert.match(app, /\$1\.00/);
+  assert.doesNotMatch(app, /Attach file \(coming soon\)|Voice \(coming soon\)/);
+});
