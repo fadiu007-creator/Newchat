@@ -275,7 +275,7 @@ export class AgentWorkflow extends WorkflowEntrypoint<Env, Params> {
       return rows as Model[];
     });
     const metrics = await step.do("load-model-metrics", async () => {
-      const rows = await this.db("model_metrics?select=provider,model_id,quality_score,avg_latency_ms");
+      const rows = await this.db("model_metrics?select=provider,model_id,quality_score,avg_latency_ms,sample_count,success_count,failure_count");
       return rows as Metric[];
     });
     const freeModels = models.length ? models : [{
