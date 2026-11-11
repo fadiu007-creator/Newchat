@@ -18,7 +18,8 @@ const sandboxWorkflow = await readFile(new URL("../.github/workflows/agent-sandb
 const sandboxRunner = await readFile(new URL("../scripts/agent-sandbox-runner.mjs", import.meta.url), "utf8");
 const paidMigration = await readFile(new URL("../supabase/migrations/014_agent_paid_model_approval_reservation.sql", import.meta.url), "utf8");
 const spendMigration = await readFile(new URL("../supabase/migrations/015_agent_chat_spend_without_run_id.sql", import.meta.url), "utf8");
-const capMigration = await readFile(new URL("../supabase/migrations/016_agent_paid_model_hard_budget_cap.sql", import.meta.url), "utf8");\nconst edenRegistryMigration = await readFile(new URL("../supabase/migrations/017_agent_edenai_free_execution_models.sql", import.meta.url), "utf8");
+const capMigration = await readFile(new URL("../supabase/migrations/016_agent_paid_model_hard_budget_cap.sql", import.meta.url), "utf8");
+const edenRegistryMigration = await readFile(new URL("../supabase/migrations/017_agent_edenai_free_execution_models.sql", import.meta.url), "utf8");
 const deployWorkflow = await readFile(new URL("../.github/workflows/deploy-cloudflare.yml", import.meta.url), "utf8");
 
 test("sandbox is dispatched to GitHub Actions and requires an independent check-run receipt", () => {
@@ -209,7 +210,8 @@ test("agent execution contains a real model catalogue refresh and supports retry
 });
 
 test("agent fallback handles token truncation without duplicate provider retries and persists terminal state", () => {
-  assert.match(workflow, /max_tokens: 7000/);\n  assert.match(workflow, /AbortSignal\.timeout\(150_000\)/);
+  assert.match(workflow, /max_tokens: 7000/);
+  assert.match(workflow, /AbortSignal\.timeout\(150_000\)/);
   assert.match(workflow, /reasoning: \{ effort: "low", exclude: true \}/);
   assert.match(workflow, /const boundedAttempts = Math\.min\(pool\.length, Math\.max\(configuredAttempts, Math\.min\(pool\.length, 6\)\)\)/);
   assert.match(workflow, /retries: \{ limit: 0, delay: "1 second", backoff: "constant" \}/);\n  assert.match(workflow, /timeout: "8 minutes"/);
