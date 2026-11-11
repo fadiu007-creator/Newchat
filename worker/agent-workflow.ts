@@ -166,6 +166,13 @@ export class AgentWorkflow extends WorkflowEntrypoint<Env, Params> {
         ? "python" : result.execution.language === "typescript" || result.execution.files.some((file: any) => String(file.path || "").endsWith(".ts"))
           ? "typescript" : "javascript";
       execution = await executeSandbox(this.env, { language, files: result.execution.files, command: result.execution.argv, timeout_ms: result.execution.timeout_ms }, crypto.randomUUID());
+      // Keep the exact source that was executed as downloadable, reviewable artifacts.
+      for (const file of result.execution.files) {
+        if (file && typeof file.path === "string" && typeof file.content === "string" &&
+            !artifacts.some((artifact: any) => artifact.name === file.path)) {
+          artifacts.push({ name: file.path, mime_type: "text/plain", content: file.content });
+        }
+      }
     }
 
     const githubResults: any[] = [];
@@ -219,7 +226,7 @@ export class AgentWorkflow extends WorkflowEntrypoint<Env, Params> {
       };
     }
     const evidenceByCriterion = new Map(result.criterion_evidence.map((item: any) => [item.criterion, item]));
-    const evidenceCorpus = [result.deliverable, ...artifacts.map((artifact: any) => artifact.content)].join("\n");
+    const evidenceCorpus = [result.deliverable, ...artifacts.map((artifact: any) => artifact.content), execution?.stdout || ""].join("\n");
     const allCriteriaAccountedFor = task.acceptance_criteria.every(c => evidenceByCriterion.has(c));
     // A model's assertion is not evidence: the quoted evidence must occur verbatim in a saved deliverable.
     const modelEvidenceMet = allCriteriaAccountedFor && task.acceptance_criteria.every(c => {
