@@ -174,13 +174,21 @@ test("agent model ranking prioritizes verified success, then untested models, ov
     { provider: "edenai", model_id: "proven", sample_count: 3, success_count: 3, failure_count: 0, quality_score: 1, avg_latency_ms: 80000 }
   ]);
   assert.deepEqual(ranked.map(model => model.model_id), ["proven", "untested", "fast-but-failed"]);
+  const taskSpecific = rankModelsForExecution([
+    { provider: "edenai", model_id: "gemma", priority: 1 },
+    { provider: "openrouter", model_id: "coder", priority: 10 }
+  ], [
+    { provider: "edenai", model_id: "gemma", task_type: "general", sample_count: 10, success_count: 10, failure_count: 0, quality_score: 1, avg_latency_ms: 1000 },
+    { provider: "openrouter", model_id: "coder", task_type: "coding", sample_count: 2, success_count: 2, failure_count: 0, quality_score: 1, avg_latency_ms: 80000 }
+  ], "balanced", "coding");
+  assert.deepEqual(taskSpecific.map(model => model.model_id), ["coder", "gemma"]);
 });
 
 test("verified free Eden AI models are registered for autonomous task execution", () => {
   assert.match(edenRegistryMigration, /google\/gemma-4-31b-it/);
   assert.match(edenRegistryMigration, /google\/gemma-4-26b-a4b-it/);
   assert.match(edenRegistryMigration, /is_free=true/);
-  assert.match(workflow, /rankModelsForExecution\(freeModels, metrics, strategy\)/);
+  assert.match(workflow, /rankModelsForExecution\(freeModels, metrics, strategy, taskType\)/);
 });
 
 test("model fallback exhausts task-specialized models before general free models without duplicates", () => {
