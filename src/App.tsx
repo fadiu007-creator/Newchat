@@ -672,7 +672,7 @@ export default function App() {
           <div className="settings-section">
             <span>PAID MODEL USAGE · ROLLING 24 HOURS</span>
             <strong>{spendLoading ? "Loading usage…" : spend24h === null ? "Usage unavailable" : "$" + spend24h.toFixed(6) + " / $1.00"}</strong>
-            <small>The $1.00 limit is enforced server-side before each paid OpenRouter chat request. Failed requests release their reservation.</small>
+            <small>The $1.00 limit is enforced server-side before each paid OpenRouter chat request. Provider-reported failures release the reservation; an unconfirmed network failure keeps the conservative estimate reserved.</small>
             {spend24h !== null && <div className="usage-track"><span style={{ width: Math.min(100, Math.max(0, spend24h * 100)) + "%" }}/></div>}
           </div>
           <div className="settings-section">
