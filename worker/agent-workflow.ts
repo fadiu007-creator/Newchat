@@ -25,7 +25,7 @@ type Model = {
   provider: "openrouter" | "edenai"; model_id: string; display_name: string;
   capabilities: string[]; is_free: boolean; priority: number;
 };
-type Metric = { provider: string; model_id: string; quality_score: number | null; avg_latency_ms: number | null; sample_count?: number; success_count?: number; failure_count?: number };
+type Metric = { provider: string; model_id: string; quality_score: number | null; avg_latency_ms: number | null; sample_count?: number; success_count?: number; failure_count?: number; task_type?: string };
 
 function canonicalJson(value: unknown): string {
   const normalize = (input: any): any => {
@@ -275,7 +275,7 @@ export class AgentWorkflow extends WorkflowEntrypoint<Env, Params> {
       return rows as Model[];
     });
     const metrics = await step.do("load-model-metrics", async () => {
-      const rows = await this.db("model_metrics?select=provider,model_id,quality_score,avg_latency_ms,sample_count,success_count,failure_count");
+      const rows = await this.db("model_metrics?select=provider,model_id,task_type,quality_score,avg_latency_ms,sample_count,success_count,failure_count");
       return rows as Metric[];
     });
     const freeModels = models.length ? models : [{
@@ -285,8 +285,6 @@ export class AgentWorkflow extends WorkflowEntrypoint<Env, Params> {
     // All execution candidates are explicitly free. Proven successful models rank ahead of
     // untested models; failed-only models are demoted instead of being rewarded for low latency.
     const strategy = run.strategy || "balanced";
-    const sortedModels = rankModelsForExecution(freeModels, metrics, strategy);
-
     for (const task of tasks) {
       if (task.status === "completed" || task.status === "skipped") continue;
       if (Date.now() - start > run.max_runtime_minutes * 60_000) {
@@ -302,7 +300,9 @@ export class AgentWorkflow extends WorkflowEntrypoint<Env, Params> {
       }
       let success = false;
       let lastFailure = "";
-      const pool = orderModelFallbacks(sortedModels, task.task_type || "general");
+      const taskType = task.task_type || "general";
+      const taskRankedModels = rankModelsForExecution(freeModels, metrics, strategy, taskType);
+      const pool = orderModelFallbacks(taskRankedModels, taskType);
       if (!pool.length) throw new Error("No eligible free AI models are configured for this task.");
       const configuredAttempts = Math.max(1, Math.min(10, Number(run.max_attempts) || 3));
       const boundedAttempts = Math.min(pool.length, Math.max(configuredAttempts, Math.min(pool.length, 6)));
