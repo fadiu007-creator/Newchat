@@ -203,7 +203,7 @@ test("model fallback exhausts task-specialized models before general free models
 test("agent execution contains a real model catalogue refresh and supports retrying blocked tasks", () => {
   assert.match(workflow, /private async refreshOpenRouterFreeRegistry/);
   assert.match(workflow, /extractProviderText\(payload\)/);
-  assert.match(workflow, /orderModelFallbacks\(sortedModels, task\.task_type/);
+  assert.match(workflow, /orderModelFallbacks\(taskRankedModels, taskType\)/);
   assert.match(workflow, /orderTasksByDependencies\(rows as Task\[\]\)/);
   assert.match(workflow, /mime_type image\/svg\+xml/);
   assert.match(worker, /orderTasksByDependencies\(tasks\)/);
