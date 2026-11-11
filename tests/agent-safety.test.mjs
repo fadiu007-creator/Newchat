@@ -225,6 +225,8 @@ test("agent fallback handles token truncation without duplicate provider retries
   assert.match(workflow, /const boundedAttempts = Math\.min\(pool\.length, Math\.max\(configuredAttempts, Math\.min\(pool\.length, 6\)\)\)/);
   assert.match(workflow, /retries: \{ limit: 0, delay: "1 second", backoff: "constant" \}/);
   assert.match(workflow, /timeout: "8 minutes"/);
+  assert.match(workflow, /Keep the exact source that was executed as downloadable, reviewable artifacts/);
+  assert.match(workflow, /execution\?\.stdout \|\| ""/);
   assert.match(workflow, /status: "blocked", last_error: message\.slice\(0, 1000\), finished_at:/);
   assert.match(workflow, /status: "failed", verification_status: "needs_review"/);
   assert.match(workflow, /actual SVG artifacts with complete valid SVG markup/);
