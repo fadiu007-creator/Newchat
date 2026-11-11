@@ -141,7 +141,8 @@ export class AgentWorkflow extends WorkflowEntrypoint<Env, Params> {
         ],
         max_tokens: 7000, temperature: 0,
         ...(model.provider === "openrouter" ? { reasoning: { effort: "low", exclude: true } } : {})
-      })
+      }),
+      signal: AbortSignal.timeout(150_000)
     });
     const responseText = await response.text();
     let payload: any;
