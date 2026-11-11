@@ -8,7 +8,7 @@ import {
   selectLatestCheckRuns,
   isCombinedStatusSatisfied
 } from "../worker/tool-adapters.ts";
-import { extractProviderText, orderModelFallbacks, orderTasksByDependencies, parseJsonObject } from "../worker/agent-utils.ts";
+import { extractProviderText, orderModelFallbacks, orderTasksByDependencies, parseJsonObject, rankModelsForExecution } from "../worker/agent-utils.ts";
 
 const adapters = await readFile(new URL("../worker/tool-adapters.ts", import.meta.url), "utf8");
 const workflow = await readFile(new URL("../worker/agent-workflow.ts", import.meta.url), "utf8");
@@ -18,7 +18,7 @@ const sandboxWorkflow = await readFile(new URL("../.github/workflows/agent-sandb
 const sandboxRunner = await readFile(new URL("../scripts/agent-sandbox-runner.mjs", import.meta.url), "utf8");
 const paidMigration = await readFile(new URL("../supabase/migrations/014_agent_paid_model_approval_reservation.sql", import.meta.url), "utf8");
 const spendMigration = await readFile(new URL("../supabase/migrations/015_agent_chat_spend_without_run_id.sql", import.meta.url), "utf8");
-const capMigration = await readFile(new URL("../supabase/migrations/016_agent_paid_model_hard_budget_cap.sql", import.meta.url), "utf8");
+const capMigration = await readFile(new URL("../supabase/migrations/016_agent_paid_model_hard_budget_cap.sql", import.meta.url), "utf8");\nconst edenRegistryMigration = await readFile(new URL("../supabase/migrations/017_agent_edenai_free_execution_models.sql", import.meta.url), "utf8");
 const deployWorkflow = await readFile(new URL("../.github/workflows/deploy-cloudflare.yml", import.meta.url), "utf8");
 
 test("sandbox is dispatched to GitHub Actions and requires an independent check-run receipt", () => {
@@ -162,6 +162,25 @@ test("agent plans are executed in dependency order even when planner returns tas
   ]), /dependency cycle/);
 });
 
+test("agent model ranking prioritizes verified success, then untested models, over failed-only fast models", () => {
+  const ranked = rankModelsForExecution([
+    { provider: "openrouter", model_id: "fast-but-failed", priority: 1 },
+    { provider: "edenai", model_id: "untested", priority: 2 },
+    { provider: "edenai", model_id: "proven", priority: 20 }
+  ], [
+    { provider: "openrouter", model_id: "fast-but-failed", sample_count: 5, success_count: 0, failure_count: 5, quality_score: 0, avg_latency_ms: 1000 },
+    { provider: "edenai", model_id: "proven", sample_count: 3, success_count: 3, failure_count: 0, quality_score: 1, avg_latency_ms: 80000 }
+  ]);
+  assert.deepEqual(ranked.map(model => model.model_id), ["proven", "untested", "fast-but-failed"]);
+});
+
+test("verified free Eden AI models are registered for autonomous task execution", () => {
+  assert.match(edenRegistryMigration, /google\/gemma-4-31b-it/);
+  assert.match(edenRegistryMigration, /google\/gemma-4-26b-a4b-it/);
+  assert.match(edenRegistryMigration, /is_free=true/);
+  assert.match(workflow, /rankModelsForExecution\(freeModels, metrics, strategy\)/);
+});
+
 test("model fallback exhausts task-specialized models before general free models without duplicates", () => {
   const pool = orderModelFallbacks([
     { provider: "openrouter", model_id: "general", capabilities: ["general"] },
@@ -190,10 +209,10 @@ test("agent execution contains a real model catalogue refresh and supports retry
 });
 
 test("agent fallback handles token truncation without duplicate provider retries and persists terminal state", () => {
-  assert.match(workflow, /max_tokens: 12000/);
+  assert.match(workflow, /max_tokens: 7000/);\n  assert.match(workflow, /AbortSignal\.timeout\(150_000\)/);
   assert.match(workflow, /reasoning: \{ effort: "low", exclude: true \}/);
-  assert.match(workflow, /const boundedAttempts = Math\.min\(10, Math\.max\(configuredAttempts, Math\.min\(sortedModels\.length, 6\)\)\)/);
-  assert.match(workflow, /retries: \{ limit: 1, delay: "5 seconds", backoff: "exponential" \}/);
+  assert.match(workflow, /const boundedAttempts = Math\.min\(pool\.length, Math\.max\(configuredAttempts, Math\.min\(pool\.length, 6\)\)\)/);
+  assert.match(workflow, /retries: \{ limit: 0, delay: "1 second", backoff: "constant" \}/);\n  assert.match(workflow, /timeout: "8 minutes"/);
   assert.match(workflow, /status: "blocked", last_error: message\.slice\(0, 1000\), finished_at:/);
   assert.match(workflow, /status: "failed", verification_status: "needs_review"/);
   assert.match(workflow, /actual SVG artifacts with complete valid SVG markup/);
