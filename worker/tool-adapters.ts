@@ -190,7 +190,7 @@ export async function executeSandbox(env: ToolEnv, input: SandboxRequest, reques
     if (run?.status === "completed") break;
     await sleep(10_000);
   }
-  if (!run || run.status !== "completed") throw new Error("GitHub Actions sandbox did not finish within 100 seconds.");
+  if (!run || run.status !== "completed") throw new Error("GitHub Actions sandbox did not finish within four minutes.");
 
   const checksResponse = await fetch(`https://api.github.com/repos/${repo}/commits/${run.head_sha}/check-runs?filter=all&per_page=100`, {
     headers: { Authorization: "Bearer " + token, Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" }
