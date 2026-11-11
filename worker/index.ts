@@ -386,18 +386,18 @@ async function createAgentPlan(request: Request, env: Env, origin: string): Prom
   const auth = await authenticate(request, env);
   if (isResponse(auth)) return json(await auth.json(), auth.status, origin);
 
-  let body: { goal?: string; strategy?: Strategy; max_budget_usd?: number; max_runtime_minutes?: number; max_attempts?: number };
+  let body: { goal?: string; strategy?: Strategy; max_runtime_minutes?: number; max_attempts?: number };
   try { body = await request.json() as typeof body; }
   catch { return json({ error: "Invalid JSON body." }, 400, origin); }
 
   const goal = typeof body.goal === "string" ? body.goal.trim() : "";
   const strategy = body.strategy || "balanced";
-  const budget = body.max_budget_usd ?? 0;
+  // Autonomous execution is restricted to free model routes; never accept a configurable paid budget here.
+  const budget = 0;
   const runtime = body.max_runtime_minutes ?? 30;
   const attempts = body.max_attempts ?? 3;
   if (goal.length < 3 || goal.length > 12000) return json({ error: "Goal must contain 3–12,000 characters." }, 400, origin);
   if (!["balanced", "best_quality", "free_first"].includes(strategy)) return json({ error: "Invalid model strategy." }, 400, origin);
-  if (typeof budget !== "number" || !Number.isFinite(budget) || budget < 0 || budget > 1000) return json({ error: "Budget must be between $0 and $1,000." }, 400, origin);
   if (!Number.isInteger(runtime) || runtime < 1 || runtime > 1440) return json({ error: "Runtime must be between 1 and 1,440 minutes." }, 400, origin);
   if (!Number.isInteger(attempts) || attempts < 1 || attempts > 10) return json({ error: "Attempts must be between 1 and 10." }, 400, origin);
   if (!env.OPENROUTER_API_KEY) return json({ error: "OpenRouter is not configured on the Worker." }, 503, origin);
