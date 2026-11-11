@@ -26,7 +26,7 @@ test("sandbox is dispatched to GitHub Actions and requires an independent check-
   assert.match(adapters, /actions\/workflows\/agent-sandbox\.yml\/dispatches/);
   assert.match(adapters, /external_id === requestId/);
   assert.match(adapters, /independent_check_run_id/);
-  assert.match(adapters, /const deadline = Date\\.now\\(\\) \\+ 240_000/);
+  assert.match(adapters, /const deadline = Date\.now\(\) \+ 240_000/);
   assert.match(sandboxWorkflow, /workflow_dispatch/);
   assert.match(sandboxWorkflow, /checks: write/);
   assert.match(sandboxWorkflow, /Newchat sandbox/);
