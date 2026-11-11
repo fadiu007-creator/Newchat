@@ -80,6 +80,34 @@ export function orderTasksByDependencies<T extends AgentTaskPlan>(tasks: T[]): T
   return ordered;
 }
 
+export function rankModelsForExecution<T extends { provider: string; model_id: string; priority?: number }>(
+  models: T[],
+  metrics: Array<{ provider: string; model_id: string; quality_score: number | null; avg_latency_ms: number | null; sample_count?: number; success_count?: number; failure_count?: number; task_type?: string }>,
+  strategy = "balanced",
+  taskType?: string
+): T[] {
+  const metricFor = (model: T) => metrics.find(metric => metric.provider === model.provider && metric.model_id === model.model_id && (!taskType || metric.task_type === taskType));
+  return [...models].sort((a, b) => {
+    const am = metricFor(a), bm = metricFor(b);
+    const aSuccesses = Number(am?.success_count || 0), bSuccesses = Number(bm?.success_count || 0);
+    if ((aSuccesses > 0) !== (bSuccesses > 0)) return aSuccesses > 0 ? -1 : 1;
+    if (aSuccesses > 0 && bSuccesses > 0) {
+      const quality = Number(bm?.quality_score || 0) - Number(am?.quality_score || 0);
+      if (quality) return quality;
+      const aRate = aSuccesses / Math.max(1, Number(am?.sample_count || aSuccesses));
+      const bRate = bSuccesses / Math.max(1, Number(bm?.sample_count || bSuccesses));
+      if (aRate !== bRate) return bRate - aRate;
+      if (strategy === "balanced") {
+        const aLatency = Number(am?.avg_latency_ms || 120000), bLatency = Number(bm?.avg_latency_ms || 120000);
+        if (aLatency !== bLatency) return aLatency - bLatency;
+      }
+    }
+    const aSamples = Number(am?.sample_count || 0), bSamples = Number(bm?.sample_count || 0);
+    if ((aSamples > 0) !== (bSamples > 0)) return aSamples > 0 ? 1 : -1;
+    return Number(a.priority || 100) - Number(b.priority || 100);
+  });
+}
+
 export function orderModelFallbacks<T extends { provider: string; model_id: string; capabilities?: string[] }>(
   models: T[], taskType: string
 ): T[] {

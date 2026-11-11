@@ -73,6 +73,10 @@ A fine-grained `GITHUB_APP_TOKEN` secret can be used as a fallback, but it expir
 
 The sandbox dispatch repository is configured as `GITHUB_SANDBOX_REPOSITORY` in `wrangler.toml`. In Agent workspace → GitHub tools, enable GitHub access and enter the user's repository allowlist. The installation must also have access to those repositories. Repository reads may run automatically; all repository writes, branch creation, pull requests and merges pause for explicit owner approval.
 
+## Autonomous model routing and fallback
+
+The agent uses explicitly free OpenRouter and Eden AI routes. Eden AI's Gemma 4 31B, Gemma 4 26B A4B and Ternary Bonsai 27B were verified in Newchat's free-model picker and are registered for execution. Models with successful execution history rank ahead of untested models; models with failures and no successes are demoted rather than rewarded for low latency. Each provider attempt runs once inside its durable Workflow step; the agent loop performs fallback, with bounded provider timeouts. Coding tasks dispatch to the isolated GitHub Actions runner and are only marked successful after the matching independent Check Run receipt confirms the command exit code.
+
 ## Sandboxed code execution
 
 Coding tasks are dispatched to `.github/workflows/agent-sandbox.yml` on the public Newchat repository. GitHub Actions provides the ephemeral hosted VM; the job then runs untrusted code inside a Docker container with:
