@@ -1,5 +1,5 @@
 import { executeSandbox, executeGithubOperation, sha256Hex, type GithubOperation } from "./tool-adapters";
-import { extractProviderText, orderModelFallbacks, orderTasksByDependencies, parseJsonObject } from "./agent-utils";
+import { extractProviderText, orderModelFallbacks, orderTasksByDependencies, parseJsonObject, rankModelsForExecution } from "./agent-utils";
 import { WorkflowEntrypoint, WorkflowStep } from "cloudflare:workers";
 import type { WorkflowEvent } from "cloudflare:workers";
 
@@ -25,7 +25,7 @@ type Model = {
   provider: "openrouter" | "edenai"; model_id: string; display_name: string;
   capabilities: string[]; is_free: boolean; priority: number;
 };
-type Metric = { provider: string; model_id: string; quality_score: number | null; avg_latency_ms: number | null };
+type Metric = { provider: string; model_id: string; quality_score: number | null; avg_latency_ms: number | null; sample_count?: number; success_count?: number; failure_count?: number };
 
 function canonicalJson(value: unknown): string {
   const normalize = (input: any): any => {
@@ -117,7 +117,7 @@ export class AgentWorkflow extends WorkflowEntrypoint<Env, Params> {
       "You are executing one bounded task inside Newchat. Produce a concrete deliverable, not a plan.",
       "Be explicit about assumptions and limitations. Never claim an external action, deployment, test, or file write happened unless a connected tool actually performed it.",
       "For visual mockup tasks, do not claim an image exists based on a written description. When suitable, create real editable SVG vector files as artifacts (mime_type image/svg+xml, complete <svg>...</svg> content) for each required view. If the request requires raster image generation or animation tools that are unavailable, state that limitation and leave the related criterion unmet.",
-      "Return one compact JSON object only, with no markdown fences. Keep the full response below 7,000 output tokens; keep deliverable under 1,200 words and each artifact focused. Schema: {\"deliverable\":\"...\",\"artifacts\":[{\"name\":\"...\",\"mime_type\":\"text/plain\",\"content\":\"...\"}],\"criterion_evidence\":[{\"criterion\":\"...\",\"evidence\":\"...\",\"status\":\"met|not_met|not_verifiable\"}],\"limitations\":[\"...\"],\"execution\":{\"language\":\"javascript|typescript|python\",\"files\":[{\"path\":\"relative/path\",\"content\":\"...\"}],\"argv\":[\"node\",\"--test\"],\"timeout_ms\":60000},\"github_operations\":[{\"action\":\"read_file|list_directory|create_branch|upsert_file|create_pull_request|merge_pull_request|verify_commit\",\"repository\":\"owner/repository\"}]}. Coding tasks must include executable files and a command. For a task that requires visual assets, include actual SVG artifacts with complete valid SVG markup (mime_type image/svg+xml); descriptions of images are not assets. If a requested format cannot be produced, mark its criterion not_met and explain why.",
+      "Return one compact JSON object only, with no markdown fences. Keep the full response concise (target 3,000–5,000 output tokens); keep the deliverable under 700 words and return at most 4 focused artifacts. Schema: {\"deliverable\":\"...\",\"artifacts\":[{\"name\":\"...\",\"mime_type\":\"text/plain\",\"content\":\"...\"}],\"criterion_evidence\":[{\"criterion\":\"...\",\"evidence\":\"...\",\"status\":\"met|not_met|not_verifiable\"}],\"limitations\":[\"...\"],\"execution\":{\"language\":\"javascript|typescript|python\",\"files\":[{\"path\":\"relative/path\",\"content\":\"...\"}],\"argv\":[\"node\",\"--test\"],\"timeout_ms\":60000},\"github_operations\":[{\"action\":\"read_file|list_directory|create_branch|upsert_file|create_pull_request|merge_pull_request|verify_commit\",\"repository\":\"owner/repository\"}]}. Coding tasks must include executable files and a command. For a task that requires visual assets, include actual SVG artifacts with complete valid SVG markup (mime_type image/svg+xml); descriptions of images are not assets. If a requested format cannot be produced, mark its criterion not_met and explain why.",
       "For coding tasks, include complete runnable source files in execution.files and a direct argv command. Supported commands start with node, npm or python3. The GitHub Actions sandbox is an ephemeral container with network disabled and no application secrets. Never claim success unless the returned receipt confirms it. For GitHub writes, propose the exact intended operation; the owner must approve it before execution.",
       "When repository access is needed, return up to four github_operations as an array of exact operation objects. Read operations are read_file {action,repository,path,branch}, list_directory {action,repository,path,branch}, or verify_commit {action,repository,branch}. Write operations are create_branch {action,repository,branch,base,base_sha}, upsert_file {action,repository,path,branch,content,commit_message}, create_pull_request {action,repository,title,body,branch,base}, or merge_pull_request {action,repository,pull_number}. Use only repositories enabled in the user allowlist. Never say a write succeeded before its result is returned.",
       `Goal: ${run.goal}`,
@@ -139,7 +139,7 @@ export class AgentWorkflow extends WorkflowEntrypoint<Env, Params> {
           { role: "system", content: "Return one complete JSON object only. Do not fabricate tool execution. If the requested output cannot be produced with the available tools, state that limitation explicitly." },
           { role: "user", content: prompt }
         ],
-        max_tokens: 12000, temperature: 0.1,
+        max_tokens: 7000, temperature: 0,
         ...(model.provider === "openrouter" ? { reasoning: { effort: "low", exclude: true } } : {})
       })
     });
@@ -281,20 +281,10 @@ export class AgentWorkflow extends WorkflowEntrypoint<Env, Params> {
       provider: "openrouter" as const, model_id: "openrouter/free", display_name: "OpenRouter Free Router",
       capabilities: ["general","analysis","coding","writing"], is_free: true, priority: 10
     }];
-    const metricFor = (m: Model) => metrics.find(x => x.provider === m.provider && x.model_id === m.model_id);
-    // All execution candidates are explicitly free. Paid models are intentionally excluded until
-    // the approval workflow and real cost accounting are enabled.
+    // All execution candidates are explicitly free. Proven successful models rank ahead of
+    // untested models; failed-only models are demoted instead of being rewarded for low latency.
     const strategy = run.strategy || "balanced";
-    const sortedModels = orderModelFallbacks([...freeModels].sort((a, b) => {
-      const am = metricFor(a), bm = metricFor(b);
-      const aq = am?.quality_score ?? 0, bq = bm?.quality_score ?? 0;
-      const al = am?.avg_latency_ms ?? 120000, bl = bm?.avg_latency_ms ?? 120000;
-      if (strategy === "best_quality") return (bq - aq) || a.priority - b.priority;
-      if (strategy === "free_first") return Number(b.is_free) - Number(a.is_free) || (bq - aq) || a.priority - b.priority;
-      const aScore = aq * 0.75 + (1 / (1 + al / 30000)) * 0.25;
-      const bScore = bq * 0.75 + (1 / (1 + bl / 30000)) * 0.25;
-      return (bScore - aScore) || a.priority - b.priority;
-    }), "general");
+    const sortedModels = rankModelsForExecution(freeModels, metrics, strategy);
 
     for (const task of tasks) {
       if (task.status === "completed" || task.status === "skipped") continue;
@@ -311,17 +301,18 @@ export class AgentWorkflow extends WorkflowEntrypoint<Env, Params> {
       }
       let success = false;
       let lastFailure = "";
+      const pool = orderModelFallbacks(sortedModels, task.task_type || "general");
+      if (!pool.length) throw new Error("No eligible free AI models are configured for this task.");
       const configuredAttempts = Math.max(1, Math.min(10, Number(run.max_attempts) || 3));
-      const boundedAttempts = Math.min(10, Math.max(configuredAttempts, Math.min(sortedModels.length, 6)));
+      const boundedAttempts = Math.min(pool.length, Math.max(configuredAttempts, Math.min(pool.length, 6)));
+      const candidateModels = pool.slice(0, boundedAttempts);
       for (let attempt = Math.max(1, (task.attempts || 0) + 1); attempt <= boundedAttempts && !success; attempt++) {
-        const pool = orderModelFallbacks(sortedModels, task.task_type || "general");
-        if (!pool.length) throw new Error("No eligible free AI models are configured for this task.");
-        const model = pool[(attempt - 1) % pool.length];
+        const model = candidateModels[attempt - 1];
         const stepName = `task-${task.id}-attempt-${attempt}`.slice(0, 240);
         const attemptStarted = Date.now();
         let outcome: { passed: boolean; result: any } | null = null;
         try {
-          outcome = await step.do(stepName, { retries: { limit: 1, delay: "5 seconds", backoff: "exponential" } }, async () => {
+          outcome = await step.do(stepName, { retries: { limit: 0, delay: "1 second", backoff: "constant" }, timeout: "8 minutes" }, async () => {
           await this.db(`agent_tasks?id=eq.${encodeURIComponent(task.id)}&user_id=eq.${encodeURIComponent(userId)}`, "PATCH", {
             status: "running", attempts: attempt, assigned_provider: model.provider, assigned_model: model.model_id,
             verification_status: "running", error: null
@@ -421,6 +412,9 @@ export class AgentWorkflow extends WorkflowEntrypoint<Env, Params> {
     return { status: terminal };
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unexpected agent workflow failure.";
+      await this.db(`agent_tasks?run_id=eq.${encodeURIComponent(runId)}&user_id=eq.${encodeURIComponent(userId)}&status=eq.running`, "PATCH", {
+        status: "failed", verification_status: "needs_review", error: message.slice(0, 1000)
+      }).catch(() => undefined);
       await this.db(`agent_runs?id=eq.${encodeURIComponent(runId)}&user_id=eq.${encodeURIComponent(userId)}`, "PATCH", {
         status: "blocked", last_error: message.slice(0, 1000), finished_at: new Date().toISOString(), heartbeat_at: new Date().toISOString()
       }).catch(() => undefined);
