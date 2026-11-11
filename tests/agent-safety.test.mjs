@@ -221,7 +221,7 @@ test("autonomous runs cannot configure a paid spend budget and the UI does not e
   assert.match(worker, /const budget = 0;/);
   assert.doesNotMatch(worker, /body\.max_budget_usd/);
   assert.doesNotMatch(app, /Maximum spend \(USD\)/);
-  assert.match(app, /Agent runs use free model routes only/);
+  assert.match(app, /Autonomous runs use free model routes only/);
 });
 
 test("settings opens an account and rolling paid-usage panel; inert chat tools are not rendered", () => {
