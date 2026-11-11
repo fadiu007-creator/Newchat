@@ -82,10 +82,11 @@ export function orderTasksByDependencies<T extends AgentTaskPlan>(tasks: T[]): T
 
 export function rankModelsForExecution<T extends { provider: string; model_id: string; priority?: number }>(
   models: T[],
-  metrics: Array<{ provider: string; model_id: string; quality_score: number | null; avg_latency_ms: number | null; sample_count?: number; success_count?: number; failure_count?: number }>,
-  strategy = "balanced"
+  metrics: Array<{ provider: string; model_id: string; quality_score: number | null; avg_latency_ms: number | null; sample_count?: number; success_count?: number; failure_count?: number; task_type?: string }>,
+  strategy = "balanced",
+  taskType?: string
 ): T[] {
-  const metricFor = (model: T) => metrics.find(metric => metric.provider === model.provider && metric.model_id === model.model_id);
+  const metricFor = (model: T) => metrics.find(metric => metric.provider === model.provider && metric.model_id === model.model_id && (!taskType || metric.task_type === taskType));
   return [...models].sort((a, b) => {
     const am = metricFor(a), bm = metricFor(b);
     const aSuccesses = Number(am?.success_count || 0), bSuccesses = Number(bm?.success_count || 0);
