@@ -73,6 +73,19 @@ A fine-grained `GITHUB_APP_TOKEN` secret can be used as a fallback, but it expir
 
 The sandbox dispatch repository is configured as `GITHUB_SANDBOX_REPOSITORY` in `wrangler.toml`. In Agent workspace → GitHub tools, enable GitHub access and enter the user's repository allowlist. The installation must also have access to those repositories. Repository reads may run automatically; all repository writes, branch creation, pull requests and merges pause for explicit owner approval.
 
+## Remote MCP integrations
+
+Newchat exposes a Streamable HTTP MCP endpoint at `https://newchat.shqiptare.workers.dev/mcp`. Sign in to Newchat and open **Integrations** to generate a personal bearer credential. The credential is displayed once, stored only as a SHA-256 hash, can be rotated/revoked, and is scoped to the account that created it.
+
+Available tools:
+- `newchat_start_task`: create a validated plan and immediately start the durable autonomous Workflow.
+- `newchat_get_task`: inspect run/task status, evidence, approval requests, events and artifacts.
+- `newchat_cancel_task`: stop an active run.
+
+The server uses Streamable HTTP JSON-RPC (MCP protocol 2025-03-26). Send `Authorization: Bearer nchat_...` on every request. Repository writes still require approval inside Newchat; execution uses free model routes and isolated GitHub Actions for coding tasks.
+
+Claude supports remote MCP connectors on mobile after the connector is configured on the Claude account. ChatGPT custom MCP setup is currently web/workspace-based and is not supported in the Android app; availability depends on plan and workspace permissions (full write-capable MCP is restricted to eligible Business and Enterprise/Edu workspaces; Pro supports read/fetch only).
+
 ## Autonomous model routing and fallback
 
 The agent uses explicitly free OpenRouter and Eden AI routes. Eden AI's Gemma 4 31B, Gemma 4 26B A4B and Ternary Bonsai 27B were verified in Newchat's free-model picker and are registered for execution. Models with successful execution history rank ahead of untested models; models with failures and no successes are demoted rather than rewarded for low latency. Each provider attempt runs once inside its durable Workflow step; the agent loop performs fallback, with bounded provider timeouts. Coding tasks dispatch to the isolated GitHub Actions runner and are only marked successful after the matching independent Check Run receipt confirms the command exit code.
