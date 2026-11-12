@@ -596,12 +596,22 @@ async function createMcpAgentRun(env: Env, userId: string, goal: string) {
     message: "Plan created through remote MCP. Autonomous execution will start immediately.",
     metadata: { planner: "openrouter/free", task_count: taskRows.length, source: "mcp" }
   });
-  const instance = await env.AGENT_WORKFLOW.create({ id: "agent-" + runId + "-" + crypto.randomUUID(), params: { runId, userId } });
-  const started = await supabaseServiceRequest(env, "agent_runs?id=eq." + encodeURIComponent(runId) + "&user_id=eq." + encodeURIComponent(userId), "PATCH", {
-    status: "queued", workflow_instance_id: instance.id, heartbeat_at: new Date().toISOString()
+  const runPath = "agent_runs?id=eq." + encodeURIComponent(runId) + "&user_id=eq." + encodeURIComponent(userId);
+  const queued = await supabaseServiceRequest(env, runPath, "PATCH", { status: "queued", heartbeat_at: new Date().toISOString() });
+  if (!queued.ok) throw new Error("The plan was saved, but the run could not be queued.");
+  let instance: { id: string };
+  try {
+    instance = await env.AGENT_WORKFLOW.create({ id: "agent-" + runId + "-" + crypto.randomUUID(), params: { runId, userId } });
+  } catch (error) {
+    await supabaseServiceRequest(env, runPath, "PATCH", { status: "failed", last_error: "Workflow creation failed: " + (error instanceof Error ? error.message : "unknown error"), finished_at: new Date().toISOString() });
+    throw error;
+  }
+  const started = await supabaseServiceRequest(env, runPath, "PATCH", {
+    workflow_instance_id: instance.id, heartbeat_at: new Date().toISOString()
   });
   if (!started.ok) {
     await (await env.AGENT_WORKFLOW.get(instance.id)).terminate().catch(() => undefined);
+    await supabaseServiceRequest(env, runPath, "PATCH", { status: "failed", last_error: "Could not save the Workflow instance ID.", finished_at: new Date().toISOString() });
     throw new Error("The plan was saved, but the autonomous Workflow could not be started.");
   }
   await supabaseServiceRequest(env, "agent_events", "POST", {
