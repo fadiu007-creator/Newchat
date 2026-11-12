@@ -319,14 +319,34 @@ export class AgentWorkflow extends WorkflowEntrypoint<Env, Params> {
         const stepName = `task-${task.id}-attempt-${attempt}`.slice(0, 240);
         const attemptStarted = Date.now();
         let outcome: { passed: boolean; result: any } | null = null;
+        let providerFailure: string | null = null;
         try {
-          outcome = await step.do(stepName, { retries: { limit: 0, delay: "1 second", backoff: "constant" }, timeout: "8 minutes" }, async () => {
+          outcome = await step.do(stepName, { retries: { limit: 1, delay: "1 second", backoff: "constant" }, timeout: "8 minutes" }, async () => {
           await this.db(`agent_tasks?id=eq.${encodeURIComponent(task.id)}&user_id=eq.${encodeURIComponent(userId)}`, "PATCH", {
             status: "running", attempts: attempt, assigned_provider: model.provider, assigned_model: model.model_id,
             verification_status: "running", error: null
           });
           await this.event(runId, userId, "task_started", `Started: ${task.title}`, { task_id: task.id, attempt, provider: model.provider, model: model.model_id });
-          const result = await this.completeTask(task, run, userId, model, attempt, lastFailure, boundedAttempts);
+          let result: Awaited<ReturnType<AgentWorkflow["completeTask"]>>;
+          try {
+            result = await this.completeTask(task, run, userId, model, attempt, lastFailure, boundedAttempts);
+          } catch (error) {
+            // Catch provider/sandbox failures inside the durable step. A rejected step is retried
+            // by Cloudflare before our model fallback loop can run; returning a failure outcome
+            // makes this a single provider attempt and lets the next candidate take over.
+            providerFailure = error instanceof Error ? error.message : "Model execution failed.";
+            await this.recordMetric(model, task.task_type || "general", Date.now() - attemptStarted, false).catch(() => undefined);
+            await this.db("agent_steps", "POST", {
+              run_id: runId, task_id: task.id, user_id: userId, attempt, step_type: "model",
+              provider: model.provider, model: model.model_id, input_summary: task.title,
+              output_summary: providerFailure.slice(0, 1000), status: "failed",
+              duration_ms: Date.now() - attemptStarted, cost_usd: 0, metadata: { fallback_attempt: attempt < boundedAttempts, provider_error_captured_inside_step: true }
+            }).catch(() => undefined);
+            await this.event(runId, userId, "model_fallback", "Provider attempt failed; trying the next eligible free model.", {
+              task_id: task.id, attempt, provider: model.provider, model: model.model_id, error: providerFailure
+            }).catch(() => undefined);
+            return { passed: false, result: { deliverable: "", criterion_evidence: [], limitations: [providerFailure] } };
+          }
           if (result.approval_pending) {
             await this.db("agent_tasks?id=eq." + encodeURIComponent(task.id) + "&user_id=eq." + encodeURIComponent(userId), "PATCH", { status: "blocked", verification_status: "not_started", result: result.result, error: "Waiting for owner approval before a GitHub write operation." });
             await this.db("agent_runs?id=eq." + encodeURIComponent(runId) + "&user_id=eq." + encodeURIComponent(userId), "PATCH", { status: "blocked", last_error: "A GitHub operation is waiting for owner approval." });
@@ -381,6 +401,10 @@ export class AgentWorkflow extends WorkflowEntrypoint<Env, Params> {
           await this.event(runId, userId, "model_fallback", `Model failed; trying the next eligible free model for: ${task.title}`, {
             task_id: task.id, attempt, provider: model.provider, model: model.model_id, error: lastFailure
           }).catch(() => undefined);
+          continue;
+        }
+        if (providerFailure) {
+          lastFailure = providerFailure;
           continue;
         }
         if (!outcome) {
