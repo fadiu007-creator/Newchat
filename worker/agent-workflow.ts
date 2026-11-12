@@ -345,7 +345,7 @@ export class AgentWorkflow extends WorkflowEntrypoint<Env, Params> {
             await this.event(runId, userId, "model_fallback", "Provider attempt failed; trying the next eligible free model.", {
               task_id: task.id, attempt, provider: model.provider, model: model.model_id, error: providerFailure
             }).catch(() => undefined);
-            return { passed: false, result: { deliverable: "", criterion_evidence: [], limitations: [providerFailure] } };
+            return { passed: false, result: { deliverable: "", criterion_evidence: [], limitations: [providerFailure], provider_error: providerFailure } };
           }
           if (result.approval_pending) {
             await this.db("agent_tasks?id=eq." + encodeURIComponent(task.id) + "&user_id=eq." + encodeURIComponent(userId), "PATCH", { status: "blocked", verification_status: "not_started", result: result.result, error: "Waiting for owner approval before a GitHub write operation." });
@@ -403,8 +403,9 @@ export class AgentWorkflow extends WorkflowEntrypoint<Env, Params> {
           }).catch(() => undefined);
           continue;
         }
-        if (providerFailure) {
-          lastFailure = providerFailure;
+        const capturedProviderFailure = (outcome?.result as any)?.provider_error as string | undefined;
+        if (capturedProviderFailure) {
+          lastFailure = capturedProviderFailure;
           continue;
         }
         if (!outcome) {
