@@ -677,6 +677,7 @@ async function handleMcp(request: Request, env: Env): Promise<Response> {
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const origin = env.ALLOWED_ORIGIN || request.headers.get("Origin") || "*";
+    const url = new URL(request.url);
     if (url.pathname === "/mcp") return handleMcp(request, env);
     if (request.method === "OPTIONS") return new Response(null, {
       headers: {
@@ -685,7 +686,6 @@ export default {
         "Access-Control-Allow-Headers": "Content-Type, Authorization"
       }
     });
-    const url = new URL(request.url);
     if (!url.pathname.startsWith("/api/")) return env.ASSETS.fetch(request);
     if (url.pathname === "/api/integrations/mcp-token") return manageMcpToken(request, env, origin);
     if (url.pathname === "/api/health") return json({
