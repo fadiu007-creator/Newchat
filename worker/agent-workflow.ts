@@ -327,7 +327,7 @@ export class AgentWorkflow extends WorkflowEntrypoint<Env, Params> {
             verification_status: "running", error: null
           });
           await this.event(runId, userId, "task_started", `Started: ${task.title}`, { task_id: task.id, attempt, provider: model.provider, model: model.model_id });
-          let result: Awaited<ReturnType<AgentWorkflow["completeTask"]>>;
+          let result: { result: any; artifacts: any[]; duration: number; passed: boolean; approval_pending?: boolean };
           try {
             result = await this.completeTask(task, run, userId, model, attempt, lastFailure, boundedAttempts);
           } catch (error) {
