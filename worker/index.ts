@@ -700,7 +700,7 @@ export default {
     if (url.pathname === "/api/integrations/mcp-token") return manageMcpToken(request, env, origin);
     if (url.pathname === "/api/health") return json({
       ok: true, service: "newchat-api",
-      capabilities: { chat: true, agentPlanning: true, agentExecution: Boolean(env.SUPABASE_SERVICE_ROLE_KEY && env.AGENT_WORKFLOW), sandboxExecution: Boolean(env.GITHUB_APP_TOKEN || (env.GITHUB_APP_ID && env.GITHUB_APP_PRIVATE_KEY && env.GITHUB_APP_INSTALLATION_ID)), githubOperations: Boolean(env.GITHUB_APP_TOKEN || (env.GITHUB_APP_ID && env.GITHUB_APP_PRIVATE_KEY && env.GITHUB_APP_INSTALLATION_ID)), independentGithubVerification: Boolean(env.GITHUB_APP_TOKEN || (env.GITHUB_APP_ID && env.GITHUB_APP_PRIVATE_KEY && env.GITHUB_APP_INSTALLATION_ID)), paidModelApproval: Boolean(env.SUPABASE_SERVICE_ROLE_KEY) },
+      capabilities: { chat: true, agentPlanning: true, remoteMcp: Boolean(env.SUPABASE_SERVICE_ROLE_KEY && env.AGENT_WORKFLOW), agentExecution: Boolean(env.SUPABASE_SERVICE_ROLE_KEY && env.AGENT_WORKFLOW), sandboxExecution: Boolean(env.GITHUB_APP_TOKEN || (env.GITHUB_APP_ID && env.GITHUB_APP_PRIVATE_KEY && env.GITHUB_APP_INSTALLATION_ID)), githubOperations: Boolean(env.GITHUB_APP_TOKEN || (env.GITHUB_APP_ID && env.GITHUB_APP_PRIVATE_KEY && env.GITHUB_APP_INSTALLATION_ID)), independentGithubVerification: Boolean(env.GITHUB_APP_TOKEN || (env.GITHUB_APP_ID && env.GITHUB_APP_PRIVATE_KEY && env.GITHUB_APP_INSTALLATION_ID)), paidModelApproval: Boolean(env.SUPABASE_SERVICE_ROLE_KEY) },
       build_sha: env.APP_COMMIT_SHA || "unversioned",
       configuration: {
         github: Boolean(env.GITHUB_APP_TOKEN || (env.GITHUB_APP_ID && env.GITHUB_APP_PRIVATE_KEY && env.GITHUB_APP_INSTALLATION_ID)),
