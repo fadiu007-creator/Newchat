@@ -300,14 +300,32 @@ async function getAgentExecutionStatus(request: Request, env: Env, origin: strin
           reconciledStatus = "cancelled";
         } else {
           const taskResult = await supabaseRequest(env, auth.token,
-            `agent_tasks?run_id=eq.${encodeURIComponent(runId)}&user_id=eq.${encodeURIComponent(auth.userId)}&select=status`, "GET");
+            `agent_tasks?run_id=eq.${encodeURIComponent(runId)}&user_id=eq.${encodeURIComponent(auth.userId)}&select=id,status`, "GET");
           if (!taskResult.ok || !Array.isArray(taskResult.data)) {
             reconciledStatus = "failed";
             lastError = "Workflow completed but task statuses could not be verified.";
           } else {
-            reconciledStatus = taskResult.data.length > 0 && taskResult.data.every((task: any) => task.status === "completed" || task.status === "skipped")
-              ? "completed" : "blocked";
-            if (reconciledStatus === "blocked") lastError = "Workflow completed with incomplete or failed tasks. Retry the incomplete tasks.";
+            // A Workflow may terminate after an invalid step configuration before its own
+            // catch block runs. Never leave a task marked running after the Workflow is terminal.
+            const orphaned = taskResult.data.filter((task: any) => task.status === "running");
+            if (orphaned.length) {
+              const repaired = await supabaseRequest(env, auth.token,
+                `agent_tasks?run_id=eq.${encodeURIComponent(runId)}&user_id=eq.${encodeURIComponent(auth.userId)}&status=eq.running`, "PATCH", {
+                  status: "failed", verification_status: "needs_review",
+                  error: "Workflow ended while this task was still running. Retry the incomplete task."
+                });
+              if (!repaired.ok) {
+                reconciledStatus = "failed";
+                lastError = "Workflow ended, but orphaned running tasks could not be reconciled.";
+              } else {
+                for (const task of orphaned) task.status = "failed";
+              }
+            }
+            if (!lastError) {
+              reconciledStatus = taskResult.data.length > 0 && taskResult.data.every((task: any) => task.status === "completed" || task.status === "skipped")
+                ? "completed" : "blocked";
+              if (reconciledStatus === "blocked") lastError = "Workflow completed with incomplete or failed tasks. Retry the incomplete tasks.";
+            }
           }
         }
         const saved = await supabaseRequest(env, auth.token,
