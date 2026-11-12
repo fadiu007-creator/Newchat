@@ -17,5 +17,6 @@ test("remote MCP exposes authenticated autonomous task tools and stores only has
   assert.match(migration, /revoke all on public\.mcp_api_tokens from anon, authenticated/);
   assert.match(app, /IntegrationsWorkspace/);
   assert.match(app, /Claude on Android/);
+  assert.match(app, /Sign in to create a secure connection[\\s\\S]*MCP server URL/);
   assert.match(app, /ChatGPT/);
 });
