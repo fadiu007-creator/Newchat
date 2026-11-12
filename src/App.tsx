@@ -346,7 +346,7 @@ function IntegrationsWorkspace({ session, onSignIn }: { session: Session | null;
       <h1>Connect your AI<br/><span>assistants to Newchat.</span></h1>
       <p>Use the Newchat remote MCP service to start autonomous tasks, check execution evidence and stop runs from supported AI clients.</p>
     </div>
-    {!session ? <div className="integration-card"><h2>Sign in to create a secure connection</h2><p>MCP credentials are tied to your Newchat account and can be revoked at any time.</p><button className="agent-plan-button" onClick={onSignIn}>Sign in</button></div> : <>
+    {!session ? <div className="integration-card"><h2>Sign in to create a secure connection</h2><p>MCP credentials are tied to your Newchat account and can be revoked at any time.</p><label className="integration-field">MCP server URL<div className="integration-copy-row"><code>{endpoint}</code><button className="agent-secondary-button" onClick={() => void copy(endpoint, "MCP URL")}><Copy size={14}/> Copy</button></div></label><button className="agent-plan-button" onClick={onSignIn}>Sign in</button></div> : <>
       <div className="integration-card">
         <div className="integration-card-head"><div><span className="agent-eyebrow">NEWCHAT MCP SERVER</span><h2>Remote MCP endpoint</h2></div><span className="agent-status">Available</span></div>
         <p>One credential grants access only to this signed-in Newchat account. The server stores a hash, not the original token.</p>
