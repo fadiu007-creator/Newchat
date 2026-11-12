@@ -2,7 +2,7 @@ import { FormEvent, KeyboardEvent, useEffect, useMemo, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { supabase, supabaseConfigured } from "./lib/supabase";
 import {
-  ArrowUp, Bot, Check, ChevronDown, Download, Globe2, Menu,
+  ArrowUp, Bot, Check, ChevronDown, Copy, Download, Globe2, KeyRound, Menu,
   MessageSquarePlus, MoreHorizontal, PanelLeftClose, Pencil, Search,
   Settings2, Sparkles, SquarePen, Trash2, X
 } from "lucide-react";
@@ -297,6 +297,99 @@ function AgentWorkspace({ session, onSignIn }: { session: Session | null; onSign
   );
 }
 
+
+
+function IntegrationsWorkspace({ session, onSignIn }: { session: Session | null; onSignIn: () => void }) {
+  const [token, setToken] = useState("");
+  const [tokenInfo, setTokenInfo] = useState<{ label: string; created_at: string; last_used_at?: string | null } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+  const endpoint = window.location.origin + "/mcp";
+
+  async function requestToken(method: "GET" | "POST" | "DELETE") {
+    if (!session || !supabase) return;
+    setBusy(true); setError(""); setMessage("");
+    try {
+      const { data } = await supabase.auth.getSession();
+      const accessToken = data.session?.access_token;
+      if (!accessToken) throw new Error("Your session expired. Sign in again.");
+      const response = await fetch("/api/integrations/mcp-token", {
+        method,
+        headers: { Authorization: "Bearer " + accessToken, "Content-Type": "application/json" },
+        ...(method === "POST" ? { body: JSON.stringify({ label: "ChatGPT and Claude" }) } : {})
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "MCP credential request failed.");
+      if (method === "GET") setTokenInfo(result.tokens?.[0] || null);
+      if (method === "POST") {
+        setToken(result.token || "");
+        setTokenInfo({ label: "ChatGPT and Claude", created_at: new Date().toISOString() });
+        setMessage("Credential created. Copy it now; Newchat will not show it again.");
+      }
+      if (method === "DELETE") { setToken(""); setTokenInfo(null); setMessage("MCP access revoked."); }
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "MCP credential request failed."); }
+    finally { setBusy(false); }
+  }
+
+  useEffect(() => { if (session) void requestToken("GET"); else { setTokenInfo(null); setToken(""); } }, [session?.user.id]);
+
+  async function copy(value: string, label: string) {
+    try { await navigator.clipboard.writeText(value); setMessage(label + " copied."); }
+    catch { setError("Clipboard access is unavailable. Select and copy the value manually."); }
+  }
+
+  return <section className="integrations-workspace">
+    <div className="agent-hero">
+      <div className="welcome-icon"><KeyRound size={22}/></div>
+      <div className="agent-eyebrow">REMOTE TOOL CONNECTIONS</div>
+      <h1>Connect your AI<br/><span>assistants to Newchat.</span></h1>
+      <p>Use the Newchat remote MCP service to start autonomous tasks, check execution evidence and stop runs from supported AI clients.</p>
+    </div>
+    {!session ? <div className="integration-card"><h2>Sign in to create a secure connection</h2><p>MCP credentials are tied to your Newchat account and can be revoked at any time.</p><button className="agent-plan-button" onClick={onSignIn}>Sign in</button></div> : <>
+      <div className="integration-card">
+        <div className="integration-card-head"><div><span className="agent-eyebrow">NEWCHAT MCP SERVER</span><h2>Remote MCP endpoint</h2></div><span className="agent-status">Available</span></div>
+        <p>One credential grants access only to this signed-in Newchat account. The server stores a hash, not the original token.</p>
+        <label className="integration-field">MCP server URL<div className="integration-copy-row"><code>{endpoint}</code><button className="agent-secondary-button" onClick={() => void copy(endpoint, "MCP URL")}><Copy size={14}/> Copy</button></div></label>
+        <div className="integration-field"><span>Connection credential</span>
+          {token ? <div className="integration-secret"><code>{token}</code><button className="agent-secondary-button" onClick={() => void copy(token, "MCP token")}><Copy size={14}/> Copy token</button></div>
+          : <div className="integration-copy-row"><span className="integration-muted">{tokenInfo ? "An active credential exists; its secret cannot be displayed again." : "No active MCP credential."}</span><button className="agent-plan-button" disabled={busy} onClick={() => void requestToken("POST")}>{busy ? "Working…" : tokenInfo ? "Rotate credential" : "Generate credential"}</button></div>}
+        </div>
+        {tokenInfo && <small className="integration-muted">Active credential · created {new Date(tokenInfo.created_at).toLocaleString()} {tokenInfo.last_used_at ? "· last used " + new Date(tokenInfo.last_used_at).toLocaleString() : "· not used yet"}</small>}
+        <div className="integration-actions"><button className="agent-secondary-button" disabled={busy || !tokenInfo} onClick={() => void requestToken("DELETE")}>Revoke access</button><span>Rotating a credential revokes the previous one.</span></div>
+        {message && <p className="integration-message">{message}</p>}{error && <p className="error-notice">{error}</p>}
+      </div>
+      <div className="integration-card">
+        <span className="agent-eyebrow">SETUP GUIDE</span><h2>Claude on Android</h2>
+        <ol className="integration-steps">
+          <li>Open <a href="https://claude.ai" target="_blank" rel="noreferrer">claude.ai</a> and go to Settings → Connectors → Add custom connector.</li>
+          <li>Enter the MCP URL above and select bearer-token / request-header authentication.</li>
+          <li>Set the <code>Authorization</code> header to <code>Bearer YOUR_NCHAT_TOKEN</code>, then finish connecting.</li>
+          <li>Open the Claude Android app. Enable Newchat under the conversation's Connectors menu. Mobile connector support and setup options vary by rollout.</li>
+        </ol>
+      </div>
+      <div className="integration-card">
+        <span className="agent-eyebrow">SETUP GUIDE</span><h2>ChatGPT</h2>
+        <ol className="integration-steps">
+          <li>Custom MCP connections are configured from ChatGPT on the web, not directly from the Android app.</li>
+          <li>Open ChatGPT Settings → Apps / Plugins or the workspace's custom MCP app setup, add the endpoint, and configure bearer authentication using the token above.</li>
+          <li>Availability depends on the ChatGPT plan and workspace policy. Full write-capable MCP is currently restricted to eligible Business and Enterprise/Edu workspaces; Pro has read/fetch-only access. Free accounts may not be able to add a custom MCP server.</li>
+          <li>When supported, use the connected Newchat tool in a chat. The Android app does not currently support custom MCP app connections.</li>
+        </ol>
+      </div>
+      <div className="integration-card">
+        <span className="agent-eyebrow">AVAILABLE MCP TOOLS</span><h2>What connected assistants can do</h2>
+        <ul className="integration-tools">
+          <li><strong>newchat_start_task</strong><span>Plan and immediately start an autonomous task. Uses free model routes.</span></li>
+          <li><strong>newchat_get_task</strong><span>Read task status, verification evidence, approvals, events and generated artifacts.</span></li>
+          <li><strong>newchat_cancel_task</strong><span>Stop an active task owned by your account.</span></li>
+        </ul>
+        <p className="integration-warning">Repository writes still pause for owner approval inside Newchat. Never paste the MCP token into a chat message; configure it only in the connector's secure authentication settings.</p>
+      </div>
+    </>}
+  </section>;
+}
+
 export default function App() {
   const [conversations, setConversations] = useState<Conversation[]>([newConversation()]);
   const [activeId, setActiveId] = useState(conversations[0].id);
@@ -317,7 +410,7 @@ export default function App() {
   const [spend24h, setSpend24h] = useState<number | null>(null);
   const [spendLoading, setSpendLoading] = useState(false);
   const [settingsError, setSettingsError] = useState("");
-  const [workspaceMode, setWorkspaceMode] = useState<"agent" | "chat">("agent");
+  const [workspaceMode, setWorkspaceMode] = useState<"agent" | "chat" | "integrations">("agent");
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const active = conversations.find(c => c.id === activeId) ?? conversations[0];
@@ -581,6 +674,7 @@ export default function App() {
         <div className="sidebar-label">WORKSPACE</div>
         <button className={"nav-item " + (workspaceMode === "agent" ? "active" : "")} onClick={() => setWorkspaceMode("agent")}><Sparkles size={16}/> Agent workspace</button>
         <button className={"nav-item " + (workspaceMode === "chat" ? "active" : "")} onClick={() => setWorkspaceMode("chat")}><MessageSquarePlus size={16}/> Chats</button>
+        <button className={"nav-item " + (workspaceMode === "integrations" ? "active" : "")} onClick={() => setWorkspaceMode("integrations")}><KeyRound size={16}/> Integrations</button>
         <button className="nav-item" disabled title="Model discovery is not available yet"><Globe2 size={16}/> Explore models <span className="soon">Soon</span></button>
         <div className="history-heading"><span className="sidebar-label">RECENT</span><MoreHorizontal size={16}/></div>
         <div className="history-list">
@@ -616,11 +710,12 @@ export default function App() {
               </div>}
             </div>}
             {workspaceMode === "agent" && <div className="agent-topbar-title"><Sparkles size={16}/> Autonomous agent</div>}
+            {workspaceMode === "integrations" && <div className="agent-topbar-title"><KeyRound size={16}/> Integrations</div>}
           </div>
           <div className="topbar-actions"><span className="connection-pill"><span className={session ? "connected" : ""}/>{session ? "Signed in" : "Sign in to sync"}</span></div>
         </header>
 
-        {workspaceMode === "agent" ? <AgentWorkspace session={session} onSignIn={() => setAuthOpen(true)}/> : (
+        {workspaceMode === "integrations" ? <IntegrationsWorkspace session={session} onSignIn={() => setAuthOpen(true)}/> : workspaceMode === "agent" ? <AgentWorkspace session={session} onSignIn={() => setAuthOpen(true)}/> : (
         <section className={`chat-area ${active.messages.length ? "has-messages" : ""}`}>
           {active.messages.length === 0 ? (
             <div className="welcome">

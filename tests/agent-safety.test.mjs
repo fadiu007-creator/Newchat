@@ -218,17 +218,26 @@ test("agent execution contains a real model catalogue refresh and supports retry
   assert.doesNotMatch(deployWorkflow, /const requiredConfiguration = .*edenai/);
 });
 
+test("agent provider failures are captured inside a valid durable Workflow step before model fallback", () => {
+  assert.match(workflow, /retries: \{ limit: 1, delay: "1 second", backoff: "constant" \}/);
+  assert.match(workflow, /provider_error_captured_inside_step: true/);
+  assert.match(workflow, /capturedProviderFailure = \(outcome\?\.result as any\)\?\.provider_error/);
+  assert.doesNotMatch(workflow, /retries: \{ limit: 0/);
+});
+
 test("agent fallback handles token truncation without duplicate provider retries and persists terminal state", () => {
   assert.match(workflow, /max_tokens: 7000/);
   assert.match(workflow, /AbortSignal\.timeout\(150_000\)/);
   assert.match(workflow, /reasoning: \{ effort: "low", exclude: true \}/);
   assert.match(workflow, /const boundedAttempts = Math\.min\(pool\.length, Math\.max\(configuredAttempts, Math\.min\(pool\.length, 6\)\)\)/);
-  assert.match(workflow, /retries: \{ limit: 0, delay: "1 second", backoff: "constant" \}/);
+  assert.match(workflow, /retries: \{ limit: 1, delay: "1 second", backoff: "constant" \}/);
   assert.match(workflow, /timeout: "8 minutes"/);
   assert.match(workflow, /Keep the exact source that was executed as downloadable, reviewable artifacts/);
   assert.match(workflow, /execution\?\.stdout \|\| ""/);
   assert.match(workflow, /status: "blocked", last_error: message\.slice\(0, 1000\), finished_at:/);
   assert.match(workflow, /status: "failed", verification_status: "needs_review"/);
+  assert.match(worker, /Workflow ended while this task was still running/);
+  assert.match(worker, /orphaned running tasks could not be reconciled/);
   assert.match(workflow, /actual SVG artifacts with complete valid SVG markup/);
 });
 
