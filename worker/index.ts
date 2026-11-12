@@ -499,6 +499,181 @@ async function createAgentPlan(request: Request, env: Env, origin: string): Prom
   }
 }
 
+
+async function manageMcpToken(request: Request, env: Env, origin: string): Promise<Response> {
+  const auth = await authenticate(request, env);
+  if (isResponse(auth)) return json(await auth.json(), auth.status, origin);
+  if (!env.SUPABASE_SERVICE_ROLE_KEY) return json({ error: "MCP token storage is not configured." }, 503, origin);
+  const filter = "user_id=eq." + encodeURIComponent(auth.userId) + "&revoked_at=is.null";
+  if (request.method === "GET") {
+    const rows = await supabaseServiceRequest(env, "mcp_api_tokens?" + filter + "&select=id,label,created_at,last_used_at&order=created_at.desc", "GET");
+    if (!rows.ok) return json({ error: "Could not load MCP connection status." }, 502, origin);
+    return json({ tokens: rows.data || [] }, 200, origin);
+  }
+  if (request.method === "DELETE") {
+    const revoked = await supabaseServiceRequest(env, "mcp_api_tokens?" + filter, "PATCH", { revoked_at: new Date().toISOString() });
+    return revoked.ok ? json({ revoked: true }, 200, origin) : json({ error: "Could not revoke MCP access." }, 502, origin);
+  }
+  if (request.method !== "POST") return json({ error: "Method not allowed." }, 405, origin);
+  let body: any = {};
+  try { body = await request.json(); } catch { return json({ error: "Invalid JSON body." }, 400, origin); }
+  const label = typeof body.label === "string" ? body.label.trim().slice(0, 80) : "Personal MCP connection";
+  const token = "nchat_" + Array.from(crypto.getRandomValues(new Uint8Array(32)), b => b.toString(16).padStart(2, "0")).join("");
+  const tokenHash = await sha256Hex(token);
+  const now = new Date().toISOString();
+  const revoked = await supabaseServiceRequest(env, "mcp_api_tokens?" + filter, "PATCH", { revoked_at: now });
+  if (!revoked.ok) return json({ error: "Could not rotate the previous MCP credential." }, 502, origin);
+  const saved = await supabaseServiceRequest(env, "mcp_api_tokens", "POST", { user_id: auth.userId, token_hash: tokenHash, label, created_at: now });
+  if (!saved.ok) return json({ error: "Could not save the MCP credential. Apply migration 018_mcp_api_tokens.sql." }, 500, origin);
+  return json({ token, endpoint: new URL("/mcp", request.url).toString(), warning: "Copy this token now. It will not be shown again." }, 201, origin);
+}
+
+async function authenticateMcp(request: Request, env: Env): Promise<{ userId: string } | Response> {
+  const bearer = request.headers.get("Authorization") || "";
+  const token = bearer.startsWith("Bearer ") ? bearer.slice(7) : "";
+  if (!/^nchat_[a-f0-9]{64}$/.test(token)) return json({ error: "A valid Newchat MCP bearer token is required." }, 401);
+  if (!env.SUPABASE_SERVICE_ROLE_KEY) return json({ error: "MCP authentication is not configured." }, 503);
+  const tokenHash = await sha256Hex(token);
+  const found = await supabaseServiceRequest(env, "mcp_api_tokens?token_hash=eq." + tokenHash + "&revoked_at=is.null&select=id,user_id&limit=1", "GET");
+  if (!found.ok || !Array.isArray(found.data) || !found.data[0]?.user_id) return json({ error: "MCP token is invalid or revoked." }, 401);
+  const row = found.data[0] as { id: string; user_id: string };
+  await supabaseServiceRequest(env, "mcp_api_tokens?id=eq." + encodeURIComponent(row.id), "PATCH", { last_used_at: new Date().toISOString() }).catch(() => undefined);
+  return { userId: row.user_id };
+}
+
+function mcpResult(id: unknown, result: unknown) {
+  return new Response(JSON.stringify({ jsonrpc: "2.0", id: id ?? null, result }), {
+    headers: { "Content-Type": "application/json", "Cache-Control": "no-store", "MCP-Protocol-Version": "2025-03-26" }
+  });
+}
+function mcpError(id: unknown, code: number, message: string) {
+  return new Response(JSON.stringify({ jsonrpc: "2.0", id: id ?? null, error: { code, message } }), {
+    headers: { "Content-Type": "application/json", "Cache-Control": "no-store", "MCP-Protocol-Version": "2025-03-26" }
+  });
+}
+
+async function createMcpAgentRun(env: Env, userId: string, goal: string) {
+  if (!env.OPENROUTER_API_KEY || !env.SUPABASE_SERVICE_ROLE_KEY) throw new Error("Autonomous execution is not configured on this Worker.");
+  if (goal.length < 3 || goal.length > 12000) throw new Error("Goal must contain 3–12,000 characters.");
+  const system = [
+    "You are Newchat's autonomous task planner. Create a realistic dependency-aware plan of 1–8 tasks.",
+    "Every task needs observable acceptance criteria. Coding tasks require runnable source files and executable tests, not just a proposal.",
+    'Return ONLY JSON: {"summary":"...","success_criteria":["..."],"tasks":[{"key":"stable-key","title":"...","description":"...","acceptance_criteria":["..."],"depends_on":[]}]}',
+    "Dependencies must reference task keys in this plan. Do not claim execution."
+  ].join("\n");
+  const upstream = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    method: "POST",
+    headers: { Authorization: "Bearer " + env.OPENROUTER_API_KEY, "Content-Type": "application/json", "HTTP-Referer": "https://newchat.shqiptare.workers.dev", "X-Title": "Newchat MCP Agent" },
+    body: JSON.stringify({ model: "openrouter/free", messages: [{ role: "system", content: system }, { role: "user", content: goal }], max_tokens: 4000, temperature: 0.1, reasoning: { effort: "low", exclude: true } }),
+    signal: AbortSignal.timeout(90000)
+  });
+  const raw = await upstream.text();
+  let payload: any;
+  try { payload = raw ? JSON.parse(raw) : {}; } catch { throw new Error("Planner returned an invalid response."); }
+  if (!upstream.ok) throw new Error(payload?.error?.message || payload?.error || "Planner failed (HTTP " + upstream.status + ").");
+  if (payload?.choices?.[0]?.finish_reason === "length") throw new Error("Planner response was truncated; retry with a shorter goal.");
+  const plan = parsePlan(extractProviderText(payload));
+  if (!plan) throw new Error("Planner returned a plan that failed validation.");
+  const runInsert = await supabaseServiceRequest(env, "agent_runs", "POST", {
+    user_id: userId, goal, summary: plan.summary, status: "planned", strategy: "balanced",
+    success_criteria: plan.success_criteria, max_budget_usd: 0, max_runtime_minutes: 30, max_attempts: 3
+  });
+  if (!runInsert.ok || !Array.isArray(runInsert.data) || !runInsert.data[0]?.id) throw new Error("Could not save the agent run.");
+  const runId = String(runInsert.data[0].id);
+  const taskRows = plan.tasks.map((task, index) => ({
+    run_id: runId, user_id: userId, task_key: task.key, position: index + 1, title: task.title,
+    description: task.description, acceptance_criteria: task.acceptance_criteria, dependencies: task.depends_on,
+    status: task.depends_on.length ? "pending" : "ready", task_type: classifyTask(task),
+    assigned_provider: "openrouter", assigned_model: "openrouter/free"
+  }));
+  const tasks = await supabaseServiceRequest(env, "agent_tasks", "POST", taskRows);
+  if (!tasks.ok) {
+    await supabaseServiceRequest(env, "agent_runs?id=eq." + encodeURIComponent(runId), "DELETE");
+    throw new Error("Could not save the agent tasks.");
+  }
+  await supabaseServiceRequest(env, "agent_events", "POST", {
+    run_id: runId, user_id: userId, event_type: "plan_created",
+    message: "Plan created through remote MCP. Autonomous execution will start immediately.",
+    metadata: { planner: "openrouter/free", task_count: taskRows.length, source: "mcp" }
+  });
+  const instance = await env.AGENT_WORKFLOW.create({ id: "agent-" + runId + "-" + crypto.randomUUID(), params: { runId, userId } });
+  const started = await supabaseServiceRequest(env, "agent_runs?id=eq." + encodeURIComponent(runId) + "&user_id=eq." + encodeURIComponent(userId), "PATCH", {
+    status: "queued", workflow_instance_id: instance.id, heartbeat_at: new Date().toISOString()
+  });
+  if (!started.ok) {
+    await (await env.AGENT_WORKFLOW.get(instance.id)).terminate().catch(() => undefined);
+    throw new Error("The plan was saved, but the autonomous Workflow could not be started.");
+  }
+  await supabaseServiceRequest(env, "agent_events", "POST", {
+    run_id: runId, user_id: userId, event_type: "execution_queued",
+    message: "Remote MCP started the durable autonomous Workflow.",
+    metadata: { workflow_id: instance.id, source: "mcp" }
+  });
+  return { run_id: runId, workflow_id: instance.id, status: "queued", summary: plan.summary, tasks: tasks.data || taskRows };
+}
+
+async function handleMcp(request: Request, env: Env): Promise<Response> {
+  if (request.method === "GET") return new Response("Newchat MCP endpoint. Send Streamable HTTP JSON-RPC requests using POST.", { headers: { "Content-Type": "text/plain" } });
+  if (request.method !== "POST") return new Response("Method not allowed", { status: 405 });
+  const auth = await authenticateMcp(request, env);
+  if (auth instanceof Response) return auth;
+  let body: any;
+  try { body = await request.json(); } catch { return mcpError(null, -32700, "Parse error"); }
+  const id = body?.id;
+  if (body?.jsonrpc !== "2.0" || typeof body?.method !== "string") return mcpError(id, -32600, "Invalid Request");
+  if (body.method === "notifications/initialized" || body.method === "notifications/cancelled") return new Response(null, { status: 202 });
+  if (body.method === "ping") return mcpResult(id, {});
+  if (body.method === "initialize") return mcpResult(id, {
+    protocolVersion: "2025-03-26", capabilities: { tools: {} },
+    serverInfo: { name: "newchat-agent", version: "1.0.0" },
+    instructions: "Use newchat_start_task to plan and immediately start a bounded autonomous task. Use newchat_get_task to inspect verified results. Coding work runs in an isolated GitHub Actions sandbox. Repository writes require owner approval in Newchat."
+  });
+  if (body.method === "tools/list") return mcpResult(id, { tools: [
+    { name: "newchat_start_task", description: "Create a plan and immediately start autonomous execution in Newchat. Use only for tasks the user explicitly asks you to carry out. Free models only; coding tasks run in an isolated sandbox; repository writes pause for owner approval.", inputSchema: { type: "object", properties: { goal: { type: "string", minLength: 3, maxLength: 12000 } }, required: ["goal"], additionalProperties: false }, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true } },
+    { name: "newchat_get_task", description: "Read the status, task results, execution evidence, approvals and generated artifacts for one of the authenticated user's Newchat runs.", inputSchema: { type: "object", properties: { run_id: { type: "string", format: "uuid" } }, required: ["run_id"], additionalProperties: false }, annotations: { readOnlyHint: true, openWorldHint: false } },
+    { name: "newchat_cancel_task", description: "Stop a running Newchat autonomous task owned by the authenticated user.", inputSchema: { type: "object", properties: { run_id: { type: "string", format: "uuid" } }, required: ["run_id"], additionalProperties: false }, annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false } }
+  ] });
+  if (body.method !== "tools/call") return mcpError(id, -32601, "Method not found");
+  const name = body?.params?.name;
+  const args = body?.params?.arguments || {};
+  try {
+    if (name === "newchat_start_task") {
+      if (typeof args.goal !== "string") throw new Error("goal is required.");
+      const started = await createMcpAgentRun(env, auth.userId, args.goal.trim());
+      return mcpResult(id, { content: [{ type: "text", text: JSON.stringify(started, null, 2) }], structuredContent: started, isError: false });
+    }
+    if (name === "newchat_get_task") {
+      if (typeof args.run_id !== "string" || !/^[0-9a-f-]{36}$/i.test(args.run_id)) throw new Error("A valid run_id is required.");
+      const runId = encodeURIComponent(args.run_id);
+      const uid = encodeURIComponent(auth.userId);
+      const [run, tasks, approvals, artifacts, events] = await Promise.all([
+        supabaseServiceRequest(env, "agent_runs?id=eq." + runId + "&user_id=eq." + uid + "&select=id,goal,summary,status,last_error,total_cost_usd,created_at,finished_at", "GET"),
+        supabaseServiceRequest(env, "agent_tasks?run_id=eq." + runId + "&user_id=eq." + uid + "&select=id,title,status,verification_status,error,result,assigned_provider,assigned_model&order=position.asc", "GET"),
+        supabaseServiceRequest(env, "agent_approvals?run_id=eq." + runId + "&user_id=eq." + uid + "&select=id,action_type,status,description,payload,created_at", "GET"),
+        supabaseServiceRequest(env, "agent_artifacts?run_id=eq." + runId + "&user_id=eq." + uid + "&select=id,name,mime_type,content_text,created_at", "GET"),
+        supabaseServiceRequest(env, "agent_events?run_id=eq." + runId + "&user_id=eq." + uid + "&select=event_type,message,created_at&order=created_at.desc&limit=30", "GET")
+      ]);
+      if (!run.ok || !Array.isArray(run.data) || !run.data[0]) throw new Error("Agent run not found.");
+      const result = { run: run.data[0], tasks: tasks.data || [], approvals: approvals.data || [], artifacts: artifacts.data || [], events: events.data || [] };
+      return mcpResult(id, { content: [{ type: "text", text: JSON.stringify(result, null, 2) }], structuredContent: result, isError: false });
+    }
+    if (name === "newchat_cancel_task") {
+      if (typeof args.run_id !== "string" || !/^[0-9a-f-]{36}$/i.test(args.run_id)) throw new Error("A valid run_id is required.");
+      const runId = encodeURIComponent(args.run_id);
+      const found = await supabaseServiceRequest(env, "agent_runs?id=eq." + runId + "&user_id=eq." + encodeURIComponent(auth.userId) + "&select=id,status,workflow_instance_id", "GET");
+      if (!found.ok || !Array.isArray(found.data) || !found.data[0]) throw new Error("Agent run not found.");
+      const run = found.data[0] as any;
+      if (!run.workflow_instance_id || !["queued", "running", "paused"].includes(run.status)) throw new Error("This task is not currently active.");
+      await (await env.AGENT_WORKFLOW.get(run.workflow_instance_id)).terminate();
+      await supabaseServiceRequest(env, "agent_runs?id=eq." + runId + "&user_id=eq." + encodeURIComponent(auth.userId), "PATCH", { status: "cancelled", finished_at: new Date().toISOString(), cancel_requested_at: new Date().toISOString() });
+      return mcpResult(id, { content: [{ type: "text", text: "Task " + run.id + " cancelled." }], isError: false });
+    }
+    return mcpError(id, -32602, "Unknown tool: " + String(name));
+  } catch (error) {
+    return mcpResult(id, { content: [{ type: "text", text: error instanceof Error ? error.message : "MCP tool failed." }], isError: true });
+  }
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const origin = env.ALLOWED_ORIGIN || request.headers.get("Origin") || "*";
